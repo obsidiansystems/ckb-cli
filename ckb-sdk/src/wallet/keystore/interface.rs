@@ -50,6 +50,17 @@ pub trait AbstractMasterPrivKey: Sized {
     fn extended_pubkey<P>(&self, path: &P) -> Result<ExtendedPubKey, Self::Err>
     where
         P: ?Sized + Debug + AsRef<[ChildNumber]>;
+
+        // let extended_pubkey = self.master_privkey.extended_pubkey(path).void_unwrap();
+        // let pubkey = extended_pubkey.public_key;
+        // H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+        //     .expect("Generate hash(H160) from pubkey failed")
+
+        // Ok(self
+        //     .borrow_account(hash160)?
+        //     .extended_pubkey(path)
+        //     .void_unwrap())
+
     fn hash160<P>(&self, path: &P) -> Result<H160, Self::Err>
     where
         P: ?Sized + Debug + AsRef<[ChildNumber]>,
