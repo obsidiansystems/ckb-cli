@@ -1,11 +1,18 @@
+use byteorder::{ByteOrder, LittleEndian};
+use either::Either;
+use itertools::Itertools;
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use self::builder::DAOBuilder;
 use self::command::TransactArgs;
+use crate::subcommands::account::AccountId;
 use crate::utils::index::IndexController;
 use crate::utils::other::{
     get_keystore_signer, get_max_mature_number, get_network_type, get_privkey_signer, is_mature,
     read_password,
 };
-use byteorder::{ByteOrder, LittleEndian};
+use ckb_crypto::secp::SECP256K1;
 use ckb_hash::new_blake2b;
 use ckb_index::{with_index_db, IndexDatabase, LiveCellInfo};
 use ckb_jsonrpc_types::JsonBytes;
@@ -13,7 +20,7 @@ use ckb_ledger::LedgerKeyStore;
 use ckb_sdk::{
     constants::{MIN_SECP_CELL_CAPACITY, SIGHASH_TYPE_HASH},
     wallet::KeyStore,
-    BoxedSignerFn, GenesisInfo, HttpRpcClient,
+    AddressPayload, BoxedSignerFn, GenesisInfo, HttpRpcClient,
 };
 use ckb_types::{
     bytes::Bytes,
@@ -22,9 +29,6 @@ use ckb_types::{
     prelude::*,
     {H160, H256},
 };
-use itertools::Itertools;
-use std::collections::HashSet;
-use std::path::PathBuf;
 
 mod builder;
 mod command;
@@ -137,10 +141,7 @@ impl<'a> DAOSubCommand<'a> {
         &'b mut self,
         transact_args: TransactArgs,
     ) -> WithTransactArgs<'a, 'b> {
-        WithTransactArgs {
-            dao: self,
-            transact_args,
-        }
+        WithTransactArgs::from_subcommand(self, transact_args)
     }
 }
 
@@ -150,6 +151,22 @@ struct WithTransactArgs<'a, 'b> {
 }
 
 impl<'a, 'b> WithTransactArgs<'a, 'b> {
+    fn from_subcommand(dao: &'b mut DAOSubCommand<'a>, transact_args: TransactArgs) -> Self {
+        let address = match transact_args.account {
+            Either::Left(ref from_privkey) => {
+                let from_pubkey = secp256k1::PublicKey::from_secret_key(&SECP256K1, from_privkey);
+                AddressPayload::from_pubkey(&from_pubkey)
+            }
+            Either::Right(AccountId::SoftwareMasterKey(ref hash160)) => {
+                AddressPayload::from_pubkey_hash(hash160.clone())
+            }
+            Either::Right(AccountId::LedgerId(ref ledger_id)) => path,
+        };
+        assert_eq!(address.payload().code_hash(), SIGHASH_TYPE_HASH.pack());
+
+        Self { dao, transact_args }
+    }
+
     pub fn deposit(&mut self, capacity: u64) -> Result<TransactionView, String> {
         self.dao.check_db_ready()?;
         let target_capacity = capacity + self.transact_args.tx_fee;
