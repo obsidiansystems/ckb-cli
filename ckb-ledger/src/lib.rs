@@ -236,12 +236,6 @@ impl AbstractPrivKey for LedgerCap {
     }
 
     fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err> {
-        if !is_valid_derivation_path(self.path.as_ref()) {
-            return Err(LedgerKeyStoreError::InvalidDerivationPath {
-                path: self.path.as_ref().iter().cloned().collect(),
-            });
-        }
-
         let mut raw_path = Vec::new();
         raw_path
             .write_u8(self.path.as_ref().len() as u8)
