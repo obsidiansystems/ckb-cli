@@ -18,9 +18,7 @@ use clap::{App, ArgMatches, SubCommand};
 use super::{account::AccountId, CliSubCommand};
 use crate::utils::{
     arg,
-    arg_parser::{
-        AddressParser, ArgParser, CapacityParser, FixedHashParser, FromStrParser,
-    },
+    arg_parser::{AddressParser, ArgParser, CapacityParser, FixedHashParser, FromStrParser},
     index::IndexController,
     key_adapter::KeyAdapter,
     other::{

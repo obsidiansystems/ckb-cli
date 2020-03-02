@@ -1,6 +1,6 @@
 use ::std::fmt::Debug;
 
-use ckb_sdk::wallet::{Bip32Error, DerivationPath};
+use ckb_sdk::wallet::Bip32Error;
 
 use failure::Fail;
 
@@ -28,11 +28,6 @@ pub enum Error {
         _0
     )]
     TrailingExtraReponse { tail: Vec<u8> },
-    #[fail(
-        display = "Illegal derivation path the ledger app would not accept: {}",
-        _0
-    )]
-    InvalidDerivationPath { path: DerivationPath },
 }
 
 impl From<RawLedgerError> for Error {

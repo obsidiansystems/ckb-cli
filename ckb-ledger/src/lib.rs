@@ -10,8 +10,8 @@ use log::debug;
 use bitcoin_hashes::{hash160, Hash};
 use byteorder::{BigEndian, WriteBytesExt};
 use ckb_sdk::wallet::{
-    is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, ChainCode,
-    ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint, ScryptType,
+    AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, ChainCode, ChildNumber,
+    DerivationPath, ExtendedPubKey, Fingerprint, ScryptType,
 };
 use ckb_types::H256;
 
@@ -190,12 +190,6 @@ impl AbstractPrivKey for LedgerCap {
     fn sign(&self, message: &H256) -> Result<Signature, Self::Err> {
         static WRITE_ERR_MSG: &'static str =
             "IO error not possible when writing to Vec last I checked";
-
-        if !is_valid_derivation_path(self.path.as_ref()) {
-            return Err(LedgerKeyStoreError::InvalidDerivationPath {
-                path: self.path.as_ref().iter().cloned().collect(),
-            });
-        }
 
         let mut raw_path = Vec::new();
         raw_path
