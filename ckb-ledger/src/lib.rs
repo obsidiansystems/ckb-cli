@@ -134,6 +134,12 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
     type Privkey = LedgerCap;
 
     fn extended_privkey(&self, path: &[ChildNumber]) -> Result<LedgerCap, Self::Err> {
+        if !is_valid_derivation_path(path.as_ref()) {
+            return Err(LedgerKeyStoreError::InvalidDerivationPath {
+                path: path.as_ref().iter().cloned().collect(),
+            });
+        }
+
         Ok(LedgerCap {
             master: self.clone(),
             path: From::from(path.as_ref()),
