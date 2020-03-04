@@ -133,6 +133,7 @@ pub trait AbstractPrivKey {
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
     fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
     fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err>;
+    fn sign_recoverable_ledger(&self, message: &[u8]) -> Result<RecoverableSignature, Self::Err>;
 }
 
 impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for Box<K> {
@@ -149,6 +150,10 @@ impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for Box<K> {
     fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err> {
         AsRef::<K>::as_ref(self).sign_recoverable(message)
     }
+
+    fn sign_recoverable_ledger(&self, message: &[u8]) -> Result<RecoverableSignature, Self::Err> {
+        AsRef::<K>::as_ref(self).sign_recoverable_ledger(message)
+    }
 }
 
 impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for &K {
@@ -164,6 +169,10 @@ impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for &K {
 
     fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err> {
         (*self).sign_recoverable(message)
+    }
+
+    fn sign_recoverable_ledger(&self, message: &[u8]) -> Result<RecoverableSignature, Self::Err> {
+        (*self).sign_recoverable_ledger(message)
     }
 }
 
@@ -184,6 +193,10 @@ impl AbstractPrivKey for ExtendedPrivKey {
         let message =
             secp256k1::Message::from_slice(message.as_bytes()).expect("Convert to message failed");
         Ok(SECP256K1.sign_recoverable(&message, &self.private_key))
+    }
+
+    fn sign_recoverable_ledger(&self, _message: &[u8]) -> Result<RecoverableSignature, Void> {
+        unimplemented!("no ledger sign_recoverable for ExtendedPrivKey")
     }
 }
 

@@ -241,6 +241,42 @@ impl TxHelper {
         Ok(signatures)
     }
 
+    pub fn sign_inputs_ledger<LS, C>(
+        &self,
+        mut ledger_signer: LS,
+        get_live_cell: C,
+    ) -> Result<HashMap<Bytes, Bytes>, String>
+    where
+        LS: SignerFnTraitForLedger,
+        C: FnMut(OutPoint, bool) -> Result<CellOutput, String>,
+    {
+        let all_sighash_lock_args = self
+            .multisig_configs
+            .iter()
+            .map(|(hash160, config)| (hash160.clone(), config.sighash_lock_args()))
+            .collect::<HashMap<_, _>>();
+
+        let mut signatures: HashMap<Bytes, Bytes> = Default::default();
+        for ((code_hash, lock_arg), _) in self.input_group(get_live_cell)?.into_iter() {
+            let multisig_hash160 = H160::from_slice(&lock_arg[..20]).unwrap();
+            let lock_args = if code_hash == MULTISIG_TYPE_HASH.pack() {
+                all_sighash_lock_args
+                    .get(&multisig_hash160)
+                    .unwrap()
+                    .clone()
+            } else {
+                let mut lock_args = HashSet::default();
+                lock_args.insert(H160::from_slice(lock_arg.as_ref()).unwrap());
+                lock_args
+            };
+            let signature = ledger_signer(&lock_args, &self.transaction.data().as_slice())
+                .map(|sig| sig.unwrap())
+                .map(|data| Bytes::from(&data[..]))?;
+            signatures.insert(lock_arg, signature);
+        }
+        Ok(signatures)
+    }
+
     pub fn build_tx<F: FnMut(OutPoint, bool) -> Result<CellOutput, String>>(
         &self,
         get_live_cell: F,
@@ -347,6 +383,15 @@ impl TxHelper {
 pub trait SignerFnTrait: FnMut(&HashSet<H160>, &H256) -> Result<Option<[u8; 65]>, String> {}
 impl<T> SignerFnTrait for T where T: FnMut(&HashSet<H160>, &H256) -> Result<Option<[u8; 65]>, String>
 {}
+
+pub trait SignerFnTraitForLedger:
+    FnMut(&HashSet<H160>, &[u8]) -> Result<Option<[u8; 65]>, String>
+{
+}
+impl<T> SignerFnTraitForLedger for T where
+    T: FnMut(&HashSet<H160>, &[u8]) -> Result<Option<[u8; 65]>, String>
+{
+}
 
 pub type BoxedSignerFn<'a> = Box<dyn SignerFnTrait + 'a>;
 

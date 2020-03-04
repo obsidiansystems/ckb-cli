@@ -43,4 +43,8 @@ impl AbstractPrivKey for PrivkeyWrapper {
             secp256k1::Message::from_slice(message.as_bytes()).expect("Convert to message failed");
         Ok(SECP256K1.sign_recoverable(&message, &self.0))
     }
+
+    fn sign_recoverable_ledger(&self, _message: &[u8]) -> Result<RecoverableSignature, Self::Err> {
+        unimplemented!("No implementation of sign_recoverable_ledger for PrivkeyWrapper")
+    }
 }

@@ -21,7 +21,7 @@ use ckb_sdk::{
         AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, ChildNumber, KeyStore, ScryptType,
     },
     Address, AddressPayload, CodeHashIndex, GenesisInfo, HttpRpcClient, NetworkType, SignerFnTrait,
-    SECP256K1,
+    SignerFnTraitForLedger, SECP256K1,
 };
 use ckb_types::{
     bytes::Bytes,
@@ -373,6 +373,36 @@ where
                 .map_err(|err| err.to_string())
                 .map(|signature| Some(serialize_signature(&signature)))
         }
+    }
+}
+
+pub fn get_master_key_signer_raw_ledger<'a, K>(
+    key: &'a K,
+    path: &'a [ChildNumber],
+) -> impl SignerFnTraitForLedger + Sized + 'a
+where
+    K: ?Sized,
+    K: AbstractMasterPrivKey,
+    <K as AbstractMasterPrivKey>::Err: ToString,
+    <K::Privkey as AbstractPrivKey>::Err: ToString,
+{
+    let derived_key_res = key.extended_privkey(path).map_err(|err| err.to_string());
+    move |lock_args: &HashSet<H160>, message: &[u8]| {
+        let derived_key = derived_key_res.as_ref()?;
+        get_key_signer_raw_ledger(derived_key)(lock_args, message)
+    }
+}
+
+pub fn get_key_signer_raw_ledger<'a, K>(key: &'a K) -> impl SignerFnTraitForLedger + Sized + 'a
+where
+    K: ?Sized,
+    K: AbstractPrivKey,
+    <K as AbstractPrivKey>::Err: ToString,
+{
+    move |_lock_args: &HashSet<H160>, message: &[u8]| {
+        key.sign_recoverable_ledger(message)
+            .map_err(|err| err.to_string())
+            .map(|signature| Some(serialize_signature(&signature)))
     }
 }
 

@@ -51,4 +51,10 @@ where
     fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err> {
         self.0.sign_recoverable(message).map_err(|e| e.to_string())
     }
+
+    fn sign_recoverable_ledger(&self, message: &[u8]) -> Result<RecoverableSignature, Self::Err> {
+        self.0
+            .sign_recoverable_ledger(message)
+            .map_err(|e| e.to_string())
+    }
 }

@@ -122,10 +122,6 @@ impl LedgerMasterCap {
     }
 }
 
-const P1_FIRST: u8 = 0x00;
-const P1_NEXT: u8 = 0x01;
-const P1_LAST: u8 = 0x80;
-
 const WRITE_ERR_MSG: &'static str = "IO error not possible when writing to Vec last I checked";
 
 impl AbstractMasterPrivKey for LedgerMasterCap {
@@ -178,12 +174,17 @@ impl AbstractPrivKey for LedgerCap {
         Ok(PublicKey::from_slice(&raw_public_key)?)
     }
 
-    fn sign(&self, message: &H256) -> Result<Signature, Self::Err> {
-        let signature = self.sign_recoverable(message)?;
-        Ok(RecoverableSignature::to_standard(&signature))
+    fn sign(&self, _message: &H256) -> Result<Signature, Self::Err> {
+        unimplemented!("Can't sign on ledger with just hash")
+        // let signature = self.sign_recoverable(message)?;
+        // Ok(RecoverableSignature::to_standard(&signature))
     }
 
-    fn sign_recoverable(&self, message: &H256) -> Result<RecoverableSignature, Self::Err> {
+    fn sign_recoverable(&self, _message: &H256) -> Result<RecoverableSignature, Self::Err> {
+        unimplemented!("Can't sign on ledger with just hash")
+    }
+
+    fn sign_recoverable_ledger(&self, message: &[u8]) -> Result<RecoverableSignature, Self::Err> {
         let mut raw_path = Vec::new();
         raw_path
             .write_u8(self.path.as_ref().len() as u8)
@@ -194,35 +195,64 @@ impl AbstractPrivKey for LedgerCap {
                 .expect(WRITE_ERR_MSG);
         }
 
-        let mut raw_message = Vec::new();
-        for &child_num in message.as_ref().iter() {
-            raw_message
-                .write_u8(From::from(child_num))
-                .expect(WRITE_ERR_MSG);
-        }
+        debug!(
+            "Nervos CKB Ledger app path {:x?} with length {:?}",
+            (raw_path),
+            (raw_path.len() as u8)
+        );
 
         debug!(
-            "Nervos CKB Ledger app request {:?} with length {:?}",
-            &(raw_path),
-            &(raw_path.len() as u8)
+            "Nervos CKB Ledger app message {:x?} with length {:?}",
+            (message),
+            (message.len() as u8)
         );
 
         self.master.ledger_app.exchange(ApduCommand {
             cla: 0x80,
             ins: 0x03,
-            p1: P1_FIRST,
+            p1: 0x0,
             p2: 0,
             length: raw_path.len() as u8,
             data: raw_path,
         })?;
 
+        for i in 0..(message.len() / 64) {
+            let mut chunk = Vec::new();
+
+            for j in 0..64 {
+                if i*64+j >= message.len() {
+                    break;
+                }
+                chunk
+                    .write_u8(message[i*64+j])
+                    .expect(WRITE_ERR_MSG);
+            }
+
+            self.master.ledger_app.exchange(ApduCommand {
+                cla: 0x80,
+                ins: 0x03,
+                p1: 0x01,
+                p2: 0,
+                length: chunk.len() as u8,
+                data: chunk,
+            })?;
+        }
+
+        let mut last_chunk = Vec::new();
+
+        for index in ((message.len() / 64) * 64)..message.len() {
+            last_chunk
+                .write_u8(message[index])
+                .expect(WRITE_ERR_MSG);
+        }
+
         let response = self.master.ledger_app.exchange(ApduCommand {
             cla: 0x80,
             ins: 0x03,
-            p1: P1_LAST | P1_NEXT,
+            p1: 0x81,
             p2: 0,
-            length: 32,
-            data: raw_message,
+            length: last_chunk.len() as u8,
+            data: last_chunk,
         })?;
 
         let mut raw_signature = response.data.clone();
