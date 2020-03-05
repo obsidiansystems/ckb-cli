@@ -157,7 +157,7 @@ type LedgerClosure = Box<dyn FnOnce(Vec<u8>) -> Result<RecoverableSignature, Led
 impl AbstractPrivKey for LedgerCap {
     type Err = LedgerKeyStoreError;
 
-    type SignerSingleShot = SignEntireHelper<LedgerClosure>;
+    type SingleShot = SignEntireHelper<LedgerClosure>;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         let mut data = Vec::new();
@@ -186,7 +186,7 @@ impl AbstractPrivKey for LedgerCap {
         //Ok(RecoverableSignature::to_standard(&signature))
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         let my_self = self.clone();
 
         SignEntireHelper::new(Box::new(move |message: Vec<u8>| {

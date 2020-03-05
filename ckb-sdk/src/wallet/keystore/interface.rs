@@ -1,3 +1,4 @@
+use std::alloc::GlobalAlloc;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
@@ -161,7 +162,7 @@ where
     }
 }
 
-pub struct MasterPrivKeySigner<Key: ?Sized>{
+pub struct MasterPrivKeySigner<Key: ?Sized> {
     path_map: HashMap<H160, DerivationPath>,
     private_key: Key,
 }
@@ -169,38 +170,46 @@ pub struct MasterPrivKeySigner<Key: ?Sized>{
 // https://GitHub.com/dtolnay/dyn-clone/issues/1 to make better
 impl<T: ?Sized + DynClone> DynClone for MasterPrivKeySigner<T> {
     unsafe fn clone_box(&self) -> *mut () {
-        let box_tail = dyn_clone::clone_box(self.0);
-        let layout = std::alloc::Layout::from_value(self);
-        let ptr = std::alloc::System.alloc(layout);
+        let box_tail = dyn_clone::clone_box(&self.private_key);
+        let layout = std::alloc::Layout::for_value(self);
+        let ptr = std::alloc::System.alloc(layout) as *mut Self;
         let path_map = self.path_map.clone();
-        std::mem::swap(&mut (*ptr).path_map, &mut path_map);
-        std::mem::swap(&mut (*ptr).path_map, &mut box_tail);
-        std::mem::forget(path_map);
+        std::ptr::write(&mut (*ptr).path_map, path_map);
+        std::ptr::copy_nonoverlapping::<u8>(
+            &mut (*ptr).private_key as *mut _,
+            &mut *box_tail as *mut _,
+            std::mem::size_of_val(&*box_tail),
+        );
         let raw_tail = Box::into_raw(box_tail);
-        std::alloc::System.dealloc(layout, raw_tail);
+        std::alloc::System.dealloc(std::alloc::Layout::for_value(&self.private_key), raw_tail);
         ptr
     }
 }
 
 impl<Key> SignerFnTrait for MasterPrivKeySigner<Key>
 where
-    Box<Self>: Clone,
-    Key: ?Sized + AbstractMasterPrivKey,
+    //Box<Self>: Clone,
+    Key: ?Sized + AbstractMasterPrivKey<Err = String>,
+    Key::Privkey: AbstractPrivKey<Err = String>,
+    <Key::Privkey as AbstractPrivKey>::SingleShot: SignerSingleShot<Err = String>,
 {
-    type SingleShot = <Key::Privkey as AbstractPrivKey>::SingleShot;
+    type SingleShot = FullyAbstractSingleShotSigner<'static>;
 
     fn new_signature_builder(
         &mut self,
         lock_args: &HashSet<H160>,
     ) -> Result<Option<Self::SingleShot>, String> {
-        //let pubkey = self.0.public_key()?;
-        //let public_key_hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
-        //    .expect("Generate hash(H160) from pubkey failed");
-        //Ok(if !lock_args.contains(&self.public_key_hash) {
-        //    None
-        //} else {
-        //    Some(KeyAdapter(self.private_key.begin_sign_recoverable()))
-        //})
+        let path = match lock_args
+            .iter()
+            .find_map(|lock_arg| self.path_map.get(lock_arg))
+        {
+            None => return Ok(None),
+            Some(path) => path.clone(),
+        };
+        let derived_key = KeyAdapter(self.0)
+            .extended_privkey(path.as_ref())
+            .map_err(|err| err.to_string())?;
+        PrivKeySigner(derived_key).new_signature_builder(lock_args)
     }
 }
 
@@ -209,7 +218,7 @@ pub trait AbstractPrivKey: DynClone {
     /// Error type for operations.
     type Err;
 
-    type SignerSingleShot: SignerSingleShot<Err = Self::Err>;
+    type SingleShot: SignerSingleShot<Err = Self::Err>;
 
     /// Get the corresponding public key
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
@@ -217,14 +226,13 @@ pub trait AbstractPrivKey: DynClone {
     // TODO make this not take a hash
     fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot;
+    fn begin_sign_recoverable(&self) -> Self::SingleShot;
 }
 
-dyn_clone::clone_trait_object!(<'a> AbstractPrivKey<SignerSingleShot = FullyAbstractSingleShotSigner<'a>, Err = String>);
+dyn_clone::clone_trait_object!(<'a> AbstractPrivKey<SingleShot = FullyAbstractSingleShotSigner<'a>, Err = String>);
 
-pub type FullyBoxedAbstractPrivkey<'a> = Box<
-    dyn AbstractPrivKey<SignerSingleShot = FullyAbstractSingleShotSigner<'a>, Err = String> + 'a,
->;
+pub type FullyBoxedAbstractPrivkey<'a> =
+    Box<dyn AbstractPrivKey<SingleShot = FullyAbstractSingleShotSigner<'a>, Err = String> + 'a>;
 
 impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for Box<K>
 where
@@ -232,7 +240,7 @@ where
 {
     type Err = K::Err;
 
-    type SignerSingleShot = K::SignerSingleShot;
+    type SingleShot = K::SingleShot;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         (&**self).public_key()
@@ -242,7 +250,7 @@ where
         (&**self).sign(message)
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         (&**self).begin_sign_recoverable()
     }
 }
@@ -250,7 +258,7 @@ where
 impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for &K {
     type Err = K::Err;
 
-    type SignerSingleShot = K::SignerSingleShot;
+    type SingleShot = K::SingleShot;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         (*self).public_key()
@@ -260,7 +268,7 @@ impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for &K {
         (*self).sign(message)
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         (*self).begin_sign_recoverable()
     }
 }
@@ -272,7 +280,7 @@ type ExtendedPublicKeySignClosure<'a> =
 impl AbstractPrivKey for ExtendedPrivKey {
     type Err = Void;
 
-    type SignerSingleShot = SignPrehashedHelper<ExtendedPublicKeySignClosure<'static>>;
+    type SingleShot = SignPrehashedHelper<ExtendedPublicKeySignClosure<'static>>;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         Ok(ExtendedPubKey::from_private(&SECP256K1, self).public_key)
@@ -284,13 +292,44 @@ impl AbstractPrivKey for ExtendedPrivKey {
         Ok(SECP256K1.sign(&message, &self.private_key))
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         let cloned_key = self.private_key.clone();
         SignPrehashedHelper::new(Box::new(move |message: H256| {
             let message = secp256k1::Message::from_slice(message.as_bytes())
                 .expect("Convert to message failed");
             Ok(SECP256K1.sign_recoverable(&message, &cloned_key))
         }))
+    }
+}
+
+pub struct PrivKeySigner<Key: ?Sized>(pub Key);
+
+impl<T: ?Sized + DynClone> DynClone for PrivKeySigner<T> {
+    unsafe fn clone_box(&self) -> *mut () {
+        Box::into_raw(dyn_clone::clone_box(&self.0)) as *mut _
+    }
+}
+
+impl<Key> SignerFnTrait for PrivKeySigner<Key>
+where
+    Box<Self>: Clone,
+    Key: ?Sized + AbstractPrivKey<Err = String>,
+    Key::SingleShot: SignerSingleShot<Err = String>,
+{
+    type SingleShot = Key::SingleShot;
+
+    fn new_signature_builder(
+        &mut self,
+        lock_args: &HashSet<H160>,
+    ) -> Result<Option<Self::SingleShot>, String> {
+        let pubkey = self.0.public_key()?;
+        let public_key_hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+            .expect("Generate hash(H160) from pubkey failed");
+        Ok(if !lock_args.contains(&self.public_key_hash) {
+            None
+        } else {
+            Some(KeyAdapter(self.private_key.begin_sign_recoverable()))
+        })
     }
 }
 

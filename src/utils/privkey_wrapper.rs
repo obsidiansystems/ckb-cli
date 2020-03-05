@@ -32,7 +32,7 @@ impl AbstractPrivKey for PrivkeyWrapper {
     // TODO `secp256k1::Error`
     type Err = Void;
 
-    type SignerSingleShot = SignPrehashedHelper<PrivkeyWrapperSignClosure>;
+    type SingleShot = SignPrehashedHelper<PrivkeyWrapperSignClosure>;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         Ok(secp256k1::PublicKey::from_secret_key(&SECP256K1, self))
@@ -44,7 +44,7 @@ impl AbstractPrivKey for PrivkeyWrapper {
         Ok(SECP256K1.sign(&message, &self.0))
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         let cloned_key = self.0.clone();
         SignPrehashedHelper::new(Box::new(move |message: H256| {
             let message = secp256k1::Message::from_slice(message.as_bytes())

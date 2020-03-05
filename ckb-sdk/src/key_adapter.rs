@@ -52,12 +52,12 @@ impl<Key> AbstractPrivKey for KeyAdapter<Key>
 where
     Key: ?Sized + AbstractPrivKey,
     Key::Err: ToString,
-    Key::SignerSingleShot: 'static,
-    <Key::SignerSingleShot as SignerSingleShot>::Err: ToString,
+    Key::SingleShot: 'static,
+    <Key::SingleShot as SignerSingleShot>::Err: ToString,
 {
     type Err = String;
 
-    type SignerSingleShot = FullyAbstractSingleShotSigner<'static>;
+    type SingleShot = FullyAbstractSingleShotSigner<'static>;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         self.0.public_key().map_err(|e| e.to_string())
@@ -67,7 +67,7 @@ where
         self.0.sign(message).map_err(|e| e.to_string())
     }
 
-    fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {
+    fn begin_sign_recoverable(&self) -> Self::SingleShot {
         Box::new(KeyAdapter(self.0.begin_sign_recoverable()))
     }
 }

@@ -380,7 +380,7 @@ where
     }
 
     fn hash_transaction(&mut self, tx_view: &TransactionView) -> Byte32 {
-        (&mut **self).tx_view(tx_view)
+        (&mut **self).hash_transaction(tx_view)
     }
 }
 
