@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use bitcoin_hashes::{hash160, Hash};
@@ -10,12 +11,16 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use void::Void;
 
+use crate::key_adapter::KeyAdapter;
 use crate::signing::{FullyAbstractSingleShotSigner, SignPrehashedHelper, SignerSingleShot};
+use crate::tx_helper::SignerFnTrait;
 use crate::wallet::bip32::{
     ChainCode, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Fingerprint,
 };
+
 use ckb_crypto::secp::SECP256K1;
 use ckb_hash::blake2b_256;
+use ckb_types::{core::TransactionView, packed::Byte32};
 use ckb_types::{H160, H256};
 
 use super::ScryptType;
@@ -124,6 +129,10 @@ pub trait AbstractMasterPrivKey: DynClone {
         }
         Err(Either::Right(SearchDerivedAddrFailed))
     }
+
+    fn hash_transaction(&self, tx_view: TransactionView) -> Byte32 {
+        tx_view.hash()
+    }
 }
 
 dyn_clone::clone_trait_object!(<'a> AbstractMasterPrivKey<Privkey = FullyBoxedAbstractPrivkey<'a>, Err = String>);
@@ -145,6 +154,53 @@ where
 
     fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
         (&**self).extended_pubkey(path)
+    }
+
+    fn hash_transaction(&self, tx_view: TransactionView) -> Byte32 {
+        (&**self).hash_transaction(tx_view)
+    }
+}
+
+pub struct MasterPrivKeySigner<Key: ?Sized>{
+    path_map: HashMap<H160, DerivationPath>,
+    private_key: Key,
+}
+
+// https://GitHub.com/dtolnay/dyn-clone/issues/1 to make better
+impl<T: ?Sized + DynClone> DynClone for MasterPrivKeySigner<T> {
+    unsafe fn clone_box(&self) -> *mut () {
+        let box_tail = dyn_clone::clone_box(self.0);
+        let layout = std::alloc::Layout::from_value(self);
+        let ptr = std::alloc::System.alloc(layout);
+        let path_map = self.path_map.clone();
+        std::mem::swap(&mut (*ptr).path_map, &mut path_map);
+        std::mem::swap(&mut (*ptr).path_map, &mut box_tail);
+        std::mem::forget(path_map);
+        let raw_tail = Box::into_raw(box_tail);
+        std::alloc::System.dealloc(layout, raw_tail);
+        ptr
+    }
+}
+
+impl<Key> SignerFnTrait for MasterPrivKeySigner<Key>
+where
+    Box<Self>: Clone,
+    Key: ?Sized + AbstractMasterPrivKey,
+{
+    type SingleShot = <Key::Privkey as AbstractPrivKey>::SingleShot;
+
+    fn new_signature_builder(
+        &mut self,
+        lock_args: &HashSet<H160>,
+    ) -> Result<Option<Self::SingleShot>, String> {
+        //let pubkey = self.0.public_key()?;
+        //let public_key_hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+        //    .expect("Generate hash(H160) from pubkey failed");
+        //Ok(if !lock_args.contains(&self.public_key_hash) {
+        //    None
+        //} else {
+        //    Some(KeyAdapter(self.private_key.begin_sign_recoverable()))
+        //})
     }
 }
 
