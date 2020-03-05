@@ -234,7 +234,7 @@ impl TxHelper {
             };
             if let Some(builder) = signer.new_signature_builder(&lock_args)? {
                 let signature = build_signature(
-                    &self.transaction.hash(),
+                    &signer.hash_transaction(&lock_args, &self.transaction),
                     &idxs,
                     &witnesses,
                     self.multisig_configs.get(&multisig_hash160),
@@ -357,6 +357,14 @@ where
         &mut self,
         lock_args: &HashSet<H160>,
     ) -> Result<Option<Self::SingleShot>, String>;
+
+    fn hash_transaction(
+        &mut self,
+        _lock_args: &HashSet<H160>,
+        tx_view: &TransactionView
+    ) -> Byte32 {
+        tx_view.hash()
+    }
 }
 
 dyn_clone::clone_trait_object!(<'a> SignerFnTrait<SingleShot = FullyAbstractSingleShotSigner<'a>>);
@@ -382,16 +390,20 @@ pub struct SignerClosureHelper<T>(pub T);
 
 impl<T, U> SignerFnTrait for SignerClosureHelper<T>
 where
-    T: FnMut(&HashSet<H160>) -> Result<Option<U>, String> + Clone,
-    U: SignerSingleShot<Err = String>,
+    T: FnMut(&HashSet<H160>) -> U + Clone,
+    U: SignerFnTrait,
 {
-    type SingleShot = U;
+    type SingleShot = U::SingleShot;
 
     fn new_signature_builder(
         &mut self,
         lock_args: &HashSet<H160>,
     ) -> Result<Option<Self::SingleShot>, String> {
-        self.0(lock_args)
+        self.0(lock_args).new_signature_builder(lock_args)
+    }
+
+    fn hash_transaction(&mut self, lock_args: &HashSet<H160>, tx_view: &TransactionView) -> Byte32 {
+        self.0(lock_args).hash_transaction(lock_args, tx_view)
     }
 }
 

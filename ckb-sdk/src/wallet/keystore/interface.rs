@@ -157,8 +157,10 @@ pub trait AbstractPrivKey: DynClone {
 
     /// Get the corresponding public key
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
+
     // TODO make this not take a hash
     fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
+
     fn begin_sign_recoverable(&self) -> Self::SignerSingleShot;
 }
 
