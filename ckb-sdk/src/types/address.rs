@@ -11,6 +11,7 @@ use ckb_types::{
     prelude::*,
     H160, H256,
 };
+use log::debug;
 use serde_derive::{Deserialize, Serialize};
 
 use super::NetworkType;
@@ -243,7 +244,16 @@ impl Address {
                 data
             }
         };
-        let value = Bech32::new(hrp.to_string(), data.to_base32())
+        let base32 = data.to_base32();
+        debug!("ascii 32 {}", {
+            let mut string = String::new();
+            for c in &base32 {
+                // Not bothering with actual base32 alphabet for debugging.
+                string.push(('A' as u8 + c.to_u8()) as char);
+            }
+            string
+        });
+        let value = Bech32::new(hrp.to_string(), base32)
             .unwrap_or_else(|_| panic!("Encode address failed: payload={:?}", self.payload));
         format!("{}", value)
     }
