@@ -296,7 +296,10 @@ impl AbstractPrivKey for LedgerCap {
                 debug!("Nervos CKB Ledger ctx raw tx {:?}", ctx_tx);
                 debug!("Nervos CKB Ledger new raw tx {:?}", message);
 
-                chunk(SignP1::NEXT | SignP1::IS_CONTEXT, ctx_tx.as_ref())?;
+                // Ledger can’t handle more than 5 contexts
+                if ctx_count > 5 {
+                    chunk(SignP1::NEXT | SignP1::IS_CONTEXT, ctx_tx.as_ref())?;
+                }
             }
 
             let response = chunk(SignP1::NEXT, message.as_ref())?;
