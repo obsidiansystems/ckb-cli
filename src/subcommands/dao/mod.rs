@@ -377,12 +377,12 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
         };
 
         let signature = if is_ledger {
-            let input_transactions: Vec<Transaction> = {
+            let input_transactions: Vec<(Transaction, u32)> = {
                 let mut txs = Vec::new();
                 for (_idx, input) in transaction.inputs().into_iter().enumerate() {
                     let ((_cell_output, cell_transaction), _) =
                         get_live_cell(self.dao.rpc_client, input.previous_output(), false)?;
-                    txs.push(cell_transaction);
+                    txs.push((cell_transaction, input.previous_output().index().unpack()));
                 }
                 txs
             };
@@ -397,7 +397,7 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                     .expect("vec as write will never fail");
                 single_signer.append(&length);
             }
-            for input_transaction in input_transactions.iter() {
+            for (input_transaction, output_idx) in input_transactions.iter() {
                 let input_transaction = input_transaction.clone();
                 let ctx_raw_tx = packed::RawTransaction::new_builder()
                     .version(input_transaction.version.pack())
@@ -419,6 +419,11 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                             .pack(),
                     )
                     .build();
+                let mut raw_id = Vec::new();
+                raw_id
+                    .write_u32::<BigEndian>(*output_idx)
+                    .expect("vec as write will never fail");
+                single_signer.append(&raw_id);
                 let mut length = Vec::new();
                 length
                     .write_u16::<BigEndian>(ctx_raw_tx.as_slice().len() as u16)
