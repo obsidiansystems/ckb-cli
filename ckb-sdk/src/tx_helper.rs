@@ -2,7 +2,7 @@ use secp256k1::recovery::RecoverableSignature;
 
 use dyn_clone::DynClone;
 
-use byteorder::{BigEndian, WriteBytesExt};
+use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use std::collections::{HashMap, HashSet};
 
 use ckb_hash::blake2b_256;
@@ -289,7 +289,7 @@ impl TxHelper {
                 builder.append(&length);
                 let mut raw_id = Vec::new();
                 raw_id
-                    .write_u32::<BigEndian>(output_idx)
+                    .write_u32::<LittleEndian>(output_idx)
                     .expect("vec as write will never fail");
                 builder.append(&raw_id);
                 builder.append(ctx_raw_tx.as_slice());

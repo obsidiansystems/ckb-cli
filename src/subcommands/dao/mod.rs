@@ -1,4 +1,4 @@
-use byteorder::{BigEndian, ByteOrder, LittleEndian, WriteBytesExt};
+use byteorder::{BigEndianpv, ByteOrder, LittleEndian, WriteBytesExt};
 use either::Either;
 use itertools::Itertools;
 use std::collections::HashSet;
@@ -426,7 +426,7 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                 single_signer.append(&length);
                 let mut raw_id = Vec::new();
                 raw_id
-                    .write_u32::<BigEndian>(*output_idx)
+                    .write_u32::<LittleEndian>(*output_idx)
                     .expect("vec as write will never fail");
                 single_signer.append(&raw_id);
                 single_signer.append(ctx_raw_tx.as_slice());
