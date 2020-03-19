@@ -419,16 +419,16 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                             .pack(),
                     )
                     .build();
+                let mut length = Vec::new();
+                length
+                    .write_u16::<BigEndian>(4 + ctx_raw_tx.as_slice().len() as u16)
+                    .expect("vec as write will never fail");
+                single_signer.append(&length);
                 let mut raw_id = Vec::new();
                 raw_id
                     .write_u32::<BigEndian>(*output_idx)
                     .expect("vec as write will never fail");
                 single_signer.append(&raw_id);
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(ctx_raw_tx.as_slice().len() as u16)
-                    .expect("vec as write will never fail");
-                single_signer.append(&length);
                 single_signer.append(ctx_raw_tx.as_slice());
             }
             let raw_tx = RawTransaction::new_builder()
