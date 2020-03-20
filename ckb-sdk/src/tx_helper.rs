@@ -305,13 +305,7 @@ impl TxHelper {
             builder.append(
                 packed::Transaction::new_builder()
                     .raw(raw_tx)
-                    .witnesses(
-                        self.transaction
-                            .witnesses()
-                            .into_iter()
-                            .map(Into::into)
-                            .pack(),
-                    )
+                    .witnesses(witnesses.clone().pack())
                     .build()
                     .as_slice(),
             );
