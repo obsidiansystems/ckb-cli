@@ -251,67 +251,7 @@ impl TxHelper {
         let input_cells: HashMap<(Byte32, Bytes, u32), Vec<usize>> =
             self.input_group(get_live_cell)?;
         let input_transactions = self.input_group_cell_order(get_live_cell)?;
-        let make_ledger_info = |mut builder: S::SingleShot, output_idx: u32| -> Result<_, String> {
-            {
-                let mut path_data = Vec::new();
-                path_data
-                    .write_u8(change_path.as_ref().len() as u8)
-                    .expect(WRITE_ERR_MSG);
-                for &child_num in change_path.as_ref().iter() {
-                    path_data
-                        .write_u32::<BigEndian>(From::from(child_num))
-                        .expect(WRITE_ERR_MSG);
-                }
-                builder.append(&path_data);
-            }
-
-            {
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(input_transactions.len() as u16)
-                    .expect("vec as write will never fail");
-                builder.append(&length);
-            }
-            for transaction in input_transactions.iter() {
-                let transaction = transaction.clone();
-                let ctx_raw_tx = packed::RawTransaction::new_builder()
-                    .version(transaction.version.pack())
-                    .cell_deps(transaction.cell_deps.into_iter().map(Into::into).pack())
-                    .header_deps(transaction.header_deps.iter().map(Pack::pack).pack())
-                    .inputs(transaction.inputs.into_iter().map(Into::into).pack())
-                    .outputs(transaction.outputs.into_iter().map(Into::into).pack())
-                    .outputs_data(transaction.outputs_data.into_iter().map(Into::into).pack())
-                    .build();
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(4 + ctx_raw_tx.as_slice().len() as u16)
-                    .expect("vec as write will never fail");
-                builder.append(&length);
-                let mut raw_id = Vec::new();
-                raw_id
-                    .write_u32::<LittleEndian>(output_idx)
-                    .expect("vec as write will never fail");
-                builder.append(&raw_id);
-                builder.append(ctx_raw_tx.as_slice());
-            }
-            let raw_tx = packed::RawTransaction::new_builder()
-                .version(self.transaction.version().pack())
-                .cell_deps(self.transaction.cell_deps())
-                .header_deps(self.transaction.header_deps())
-                .inputs(self.transaction.inputs())
-                .outputs(self.transaction.outputs())
-                .outputs_data(self.transaction.outputs_data())
-                .build();
-            builder.append(
-                packed::Transaction::new_builder()
-                    .raw(raw_tx)
-                    .witnesses(witnesses.clone().pack())
-                    .build()
-                    .as_slice(),
-            );
-            Box::new(builder).finalize()
-        };
-        for ((code_hash, lock_arg, output_idx), idxs) in input_cells.into_iter() {
+        for ((code_hash, lock_arg, output_idx), input_idxs) in input_cells.into_iter() {
             let multisig_hash160 = H160::from_slice(&lock_arg[..20]).unwrap();
             let lock_args = if code_hash == MULTISIG_TYPE_HASH.pack() {
                 all_sighash_lock_args
@@ -327,18 +267,18 @@ impl TxHelper {
                 // TODO no `is_ledger` hack that makes this code aware of the
                 // ledger or hardware wallets, no packing both of these into 1
                 // array just to parse them apart.
-                if is_ledger {
-                    signatures.insert(lock_arg, make_ledger_info(builder, output_idx)?);
-                } else {
-                    let signature = build_signature(
-                        &self.transaction.hash(),
-                        &idxs,
-                        &witnesses,
-                        self.multisig_configs.get(&multisig_hash160),
-                        builder,
-                    )?;
-                    signatures.insert(lock_arg, signature);
-                }
+                let mk_sig = if is_ledger { build_signature_ledger } else { build_signature };
+                let signature = mk_sig(
+                    &self.transaction,
+                    input_transactions.as_ref(),
+                    &input_idxs,
+                    output_idx,
+                    &witnesses,
+                    self.multisig_configs.get(&multisig_hash160),
+                    change_path,
+                    builder,
+                )?;
+                signatures.insert(lock_arg, signature);
             }
         }
         Ok(signatures)
@@ -623,12 +563,16 @@ pub fn check_lock_script(lock: &Script) -> Result<(), String> {
 }
 
 pub fn build_signature<S: SignerSingleShot<Err = String>>(
-    tx_hash: &Byte32,
+    transaction: &TransactionView,
+    _input_transactions: &[Transaction],
     input_group_idxs: &[usize],
+    _output_idx: u32,
     witnesses: &[packed::Bytes],
     multisig_config_opt: Option<&MultisigConfig>,
+    _change_path: &DerivationPath,
     mut signer: S,
 ) -> Result<RecoverableSignature, String> {
+    let tx_hash: Byte32 = transaction.hash();
     let init_witness_idx = input_group_idxs[0];
     let init_witness = if witnesses[init_witness_idx].raw_data().is_empty() {
         WitnessArgs::default()
@@ -663,5 +607,75 @@ pub fn build_signature<S: SignerSingleShot<Err = String>>(
         signer.append(&(other_witness.len() as u64).to_le_bytes());
         signer.append(&other_witness.raw_data());
     }
+    Box::new(signer).finalize()
+}
+
+pub fn build_signature_ledger<S: SignerSingleShot<Err = String>>(
+    transaction: &TransactionView,
+    input_transactions: &[Transaction],
+    _input_group_idxs: &[usize],
+    output_idx: u32,
+    witnesses: &[packed::Bytes],
+    _multisig_config_opt: Option<&MultisigConfig>,
+    change_path: &DerivationPath,
+    mut signer: S,
+) -> Result<RecoverableSignature, String> {
+    {
+        let mut path_data = Vec::new();
+        path_data
+            .write_u8(change_path.as_ref().len() as u8)
+            .expect(WRITE_ERR_MSG);
+        for &child_num in change_path.as_ref().iter() {
+            path_data
+                .write_u32::<BigEndian>(From::from(child_num))
+                .expect(WRITE_ERR_MSG);
+        }
+        signer.append(&path_data);
+    }
+
+    {
+        let mut length = Vec::new();
+        length
+            .write_u16::<BigEndian>(input_transactions.len() as u16)
+            .expect("vec as write will never fail");
+        signer.append(&length);
+    }
+    for transaction in input_transactions.iter() {
+        let transaction = transaction.clone();
+        let ctx_raw_tx = packed::RawTransaction::new_builder()
+            .version(transaction.version.pack())
+            .cell_deps(transaction.cell_deps.into_iter().map(Into::into).pack())
+            .header_deps(transaction.header_deps.iter().map(Pack::pack).pack())
+            .inputs(transaction.inputs.into_iter().map(Into::into).pack())
+            .outputs(transaction.outputs.into_iter().map(Into::into).pack())
+            .outputs_data(transaction.outputs_data.into_iter().map(Into::into).pack())
+            .build();
+        let mut length = Vec::new();
+        length
+            .write_u16::<BigEndian>(4 + ctx_raw_tx.as_slice().len() as u16)
+            .expect("vec as write will never fail");
+        signer.append(&length);
+        let mut raw_id = Vec::new();
+        raw_id
+            .write_u32::<LittleEndian>(output_idx)
+            .expect("vec as write will never fail");
+        signer.append(&raw_id);
+        signer.append(ctx_raw_tx.as_slice());
+    }
+    let raw_tx = packed::RawTransaction::new_builder()
+        .version(transaction.version().pack())
+        .cell_deps(transaction.cell_deps())
+        .header_deps(transaction.header_deps())
+        .inputs(transaction.inputs())
+        .outputs(transaction.outputs())
+        .outputs_data(transaction.outputs_data())
+        .build();
+    signer.append(
+        packed::Transaction::new_builder()
+            .raw(raw_tx)
+            .witnesses(witnesses.to_vec().pack())
+            .build()
+            .as_slice(),
+    );
     Box::new(signer).finalize()
 }
