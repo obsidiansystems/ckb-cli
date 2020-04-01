@@ -267,8 +267,9 @@ impl TxHelper {
                 // TODO no `is_ledger` hack that makes this code aware of the
                 // ledger or hardware wallets, no packing both of these into 1
                 // array just to parse them apart.
-                let mk_sig = if is_ledger { build_signature_ledger } else { build_signature };
+                let mk_sig = if is_ledger { build_signature_ledger } else { S::SingleShot::build_signature };
                 let signature = mk_sig(
+                    builder,
                     &self.transaction,
                     input_transactions.as_ref(),
                     &input_idxs,
@@ -276,7 +277,6 @@ impl TxHelper {
                     &witnesses,
                     self.multisig_configs.get(&multisig_hash160),
                     change_path,
-                    builder,
                 )?;
                 signatures.insert(lock_arg, signature);
             }
@@ -562,55 +562,73 @@ pub fn check_lock_script(lock: &Script) -> Result<(), String> {
     }
 }
 
-pub fn build_signature<S: SignerSingleShot<Err = String>>(
-    transaction: &TransactionView,
-    _input_transactions: &[Transaction],
-    input_group_idxs: &[usize],
-    _output_idx: u32,
-    witnesses: &[packed::Bytes],
-    multisig_config_opt: Option<&MultisigConfig>,
-    _change_path: &DerivationPath,
-    mut signer: S,
-) -> Result<RecoverableSignature, String> {
-    let tx_hash: Byte32 = transaction.hash();
-    let init_witness_idx = input_group_idxs[0];
-    let init_witness = if witnesses[init_witness_idx].raw_data().is_empty() {
-        WitnessArgs::default()
-    } else {
-        WitnessArgs::from_slice(witnesses[init_witness_idx].raw_data().as_ref())
-            .map_err(|err| err.to_string())?
-    };
+pub trait TransactionSigner {
+    fn build_signature(
+        self,
+        transaction: &TransactionView,
+        input_transactions: &[Transaction],
+        input_group_idxs: &[usize],
+        output_idx: u32,
+        witnesses: &[packed::Bytes],
+        multisig_config_opt: Option<&MultisigConfig>,
+        change_path: &DerivationPath)
+        -> Result<RecoverableSignature, String>;
+}
 
-    let init_witness = if let Some(multisig_config) = multisig_config_opt {
-        let lock_without_sig = {
-            let sig_len = (multisig_config.threshold() as usize) * SECP_SIGNATURE_SIZE;
-            let mut data = multisig_config.to_witness_data();
-            data.extend_from_slice(vec![0u8; sig_len].as_slice());
-            data
+impl<S> TransactionSigner for S
+where S: SignerSingleShot<Err = String>
+{
+    fn build_signature(
+        mut self,
+        transaction: &TransactionView,
+        _input_transactions: &[Transaction],
+        input_group_idxs: &[usize],
+        _output_idx: u32,
+        witnesses: &[packed::Bytes],
+        multisig_config_opt: Option<&MultisigConfig>,
+        _change_path: &DerivationPath,
+    ) -> Result<RecoverableSignature, String> {
+        let tx_hash: Byte32 = transaction.hash();
+        let init_witness_idx = input_group_idxs[0];
+        let init_witness = if witnesses[init_witness_idx].raw_data().is_empty() {
+            WitnessArgs::default()
+        } else {
+            WitnessArgs::from_slice(witnesses[init_witness_idx].raw_data().as_ref())
+                .map_err(|err| err.to_string())?
         };
-        init_witness
-            .as_builder()
-            .lock(Some(lock_without_sig).pack())
-            .build()
-    } else {
-        init_witness
-            .as_builder()
-            .lock(Some(Bytes::from(vec![0u8; SECP_SIGNATURE_SIZE])).pack())
-            .build()
-    };
 
-    signer.append(tx_hash.as_slice());
-    signer.append(&(init_witness.as_bytes().len() as u64).to_le_bytes());
-    signer.append(&init_witness.as_bytes());
-    for idx in input_group_idxs.iter().skip(1).cloned() {
-        let other_witness: &packed::Bytes = &witnesses[idx];
-        signer.append(&(other_witness.len() as u64).to_le_bytes());
-        signer.append(&other_witness.raw_data());
+        let init_witness = if let Some(multisig_config) = multisig_config_opt {
+            let lock_without_sig = {
+                let sig_len = (multisig_config.threshold() as usize) * SECP_SIGNATURE_SIZE;
+                let mut data = multisig_config.to_witness_data();
+                data.extend_from_slice(vec![0u8; sig_len].as_slice());
+                data
+            };
+            init_witness
+                .as_builder()
+                .lock(Some(lock_without_sig).pack())
+                .build()
+        } else {
+            init_witness
+                .as_builder()
+                .lock(Some(Bytes::from(vec![0u8; SECP_SIGNATURE_SIZE])).pack())
+                .build()
+        };
+
+        self.append(tx_hash.as_slice());
+        self.append(&(init_witness.as_bytes().len() as u64).to_le_bytes());
+        self.append(&init_witness.as_bytes());
+        for idx in input_group_idxs.iter().skip(1).cloned() {
+            let other_witness: &packed::Bytes = &witnesses[idx];
+            self.append(&(other_witness.len() as u64).to_le_bytes());
+            self.append(&other_witness.raw_data());
+        }
+        Box::new(self).finalize()
     }
-    Box::new(signer).finalize()
 }
 
 pub fn build_signature_ledger<S: SignerSingleShot<Err = String>>(
+    mut signer: S,
     transaction: &TransactionView,
     input_transactions: &[Transaction],
     _input_group_idxs: &[usize],
@@ -618,7 +636,6 @@ pub fn build_signature_ledger<S: SignerSingleShot<Err = String>>(
     witnesses: &[packed::Bytes],
     _multisig_config_opt: Option<&MultisigConfig>,
     change_path: &DerivationPath,
-    mut signer: S,
 ) -> Result<RecoverableSignature, String> {
     {
         let mut path_data = Vec::new();

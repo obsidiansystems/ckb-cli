@@ -20,7 +20,7 @@ pub use transaction::{
     ReprMockCellDep, ReprMockInfo, ReprMockInput, ReprMockTransaction,
 };
 pub use tx_helper::{
-    build_signature, BoxedSignerFn, MultisigConfig, SignerClosureHelper, SignerFnTrait, TxHelper,
+    TransactionSigner, BoxedSignerFn, MultisigConfig, SignerClosureHelper, SignerFnTrait, TxHelper,
 };
 pub use types::{
     Address, AddressPayload, AddressType, CodeHashIndex, HumanCapacity, NetworkType, OldAddress,
