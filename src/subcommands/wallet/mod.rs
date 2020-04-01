@@ -38,7 +38,7 @@ use ckb_sdk::{
     rpc::Transaction,
     wallet::{AbstractMasterPrivKey, AbstractPrivKey, DerivationPath, KeyStore},
     Address, AddressPayload, GenesisInfo, HttpRpcClient, HumanCapacity, MultisigConfig,
-    NetworkType, SignerClosureHelper, SignerFnTrait, Since, SinceType, TxHelper,
+    NetworkType, SignerClosureHelper, SignerFnTrait, Since, SinceType, TxHelper, SignerSingleShot,
 };
 
 pub struct WalletSubCommand<'a> {
@@ -344,7 +344,7 @@ impl<'a> WalletSubCommand<'a> {
         }
     }
 
-    fn transfer_impl(
+    fn transfer_impl<S>(
         &mut self,
         network_type: NetworkType,
         from_address_payload_opt: Option<AddressPayload>,
@@ -354,14 +354,17 @@ impl<'a> WalletSubCommand<'a> {
         to_data: Bytes,
         tx_fee: u64,
         lock_hashes: Vec<Byte32>,
-        signer: impl SignerFnTrait,
+        signer: S,
         is_ledger: bool,
         change_path: &DerivationPath,
         multisig_config_opt: Option<MultisigConfig>,
         format: OutputFormat,
         color: bool,
         debug: bool,
-    ) -> Result<String, String> {
+    ) -> Result<String, String>
+    where S: SignerFnTrait,
+          S::SingleShot: SignerSingleShot<Err = String>,
+    {
         let from_address = from_address_payload_opt.map(|x| Address::new(network_type, x.clone()));
 
         let to_address_hash_type = to_address.payload().hash_type();

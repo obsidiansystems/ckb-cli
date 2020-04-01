@@ -238,6 +238,7 @@ impl TxHelper {
     ) -> Result<HashMap<Bytes, RecoverableSignature>, String>
     where
         S: SignerFnTrait,
+        S::SingleShot: SignerSingleShot<Err = String>, // TODO get rid of
         C: FnMut(OutPoint, bool) -> Result<(CellOutput, Transaction), String>,
     {
         let all_sighash_lock_args = self
@@ -387,7 +388,7 @@ impl TxHelper {
 
 pub trait SignerFnTrait: DynClone
 where
-    Self::SingleShot: SignerSingleShot<Err = String>,
+    Self::SingleShot: TransactionSigner,
 {
     type SingleShot;
 
@@ -421,7 +422,7 @@ pub struct SignerClosureHelper<T>(pub T);
 impl<T, U> SignerFnTrait for SignerClosureHelper<T>
 where
     T: FnMut(&HashSet<H160>) -> Result<Option<U>, String> + Clone,
-    U: SignerSingleShot<Err = String>,
+    U: TransactionSigner,
 {
     type SingleShot = U;
 
@@ -433,8 +434,11 @@ where
     }
 }
 
+// TODO switch
 pub type BoxedSignerFn<'a> =
     Box<dyn SignerFnTrait<SingleShot = Box<dyn SignerSingleShot<Err = String>>> + 'a>;
+//pub type BoxedSignerFn<'a> =
+//    Box<dyn SignerFnTrait<SingleShot = Box<dyn TransactionSigner>> + 'a>;
 
 #[derive(Eq, PartialEq, Clone)]
 pub struct MultisigConfig {
