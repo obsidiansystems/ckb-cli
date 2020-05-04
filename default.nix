@@ -17,9 +17,9 @@
 
 # Rust manifest hash must be updated when rust-toolchain file changes.
 , rustPackages ? rustOverlay.rustChannelOf {
-    date = "2019-09-26";
+    date = "2020-05-04";
     rustToolchain = ./rust-toolchain;
-    sha256 = "1x22rf6ahb4cniykfz3ml7w0hh226pcig154xbcf5cg7j4k72rig";
+    sha256 = "sha256-Pj5c6sufuY0IZg/NwiVUqOB0z85OlLDrGbWyYYk9tx4=";
   }
 
 , gitignoreNix ? fetch (builtins.fromJSON (builtins.readFile ./nix/gitignore.nix/github.json))
