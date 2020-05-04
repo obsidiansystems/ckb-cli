@@ -3,7 +3,7 @@ pub use super::error::Error;
 pub fn split_off_at<'inner, 'outer>(
     response: &'outer mut &'inner [u8],
     idx: usize,
-) -> Result<(&'inner [u8]), Error> {
+) -> Result<&'inner [u8], Error> {
     let (head, tail) = {
         let old_resp = *response;
         // TODO why no non-panicking split at....
