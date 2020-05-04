@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use bitflags;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, WriteBytesExt};
 use log::debug;
 use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::RecoveryId, Signature};
 
@@ -207,48 +207,11 @@ impl AbstractPrivKey for LedgerCap {
         let my_self = self.clone();
 
         SignEntireHelper::new(Box::new(move |message: Vec<u8>| {
-            let mut message = message.as_ref();
-
-            let mut raw_path = Vec::new();
-            raw_path
-                .write_u8(my_self.path.as_ref().len() as u8)
-                .expect(WRITE_ERR_MSG);
-            for &child_num in my_self.path.as_ref().iter() {
-                raw_path
-                    .write_u32::<BigEndian>(From::from(child_num))
-                    .expect(WRITE_ERR_MSG);
-            }
-
-            let change_path_len = parse::split_first(&mut message)?;
-            let raw_change_path = if change_path_len > 0 {
-                let my_change_path =
-                    parse::split_off_at(&mut message, 4 * change_path_len as usize)?.to_vec();
-                debug!("Change path is {:02x?}", my_change_path);
-                let mut path = Vec::new();
-                path.push(change_path_len);
-                path.extend(my_change_path);
-                path
-            } else {
-                raw_path.clone()
-            };
-
-            my_self.master.ledger_app.exchange(ApduCommand {
-                cla: 0x80,
-                ins: 0x03,
-                p1: SignP1::FIRST.bits,
-                p2: 0,
-                length: raw_path.len() as u8,
-                data: raw_path,
-            })?;
-
-            my_self.master.ledger_app.exchange(ApduCommand {
-                cla: 0x80,
-                ins: 0x03,
-                p1: 0x11,
-                p2: 0,
-                length: raw_change_path.len() as u8,
-                data: raw_change_path.to_vec(),
-            })?;
+            debug!(
+                "Sending Nervos CKB Ledger app message of {:02x?} with length {:?}",
+                message,
+                message.len()
+            );
 
             let chunk = |base: SignP1, mut message: &[u8]| -> Result<_, Self::Err> {
                 assert!(message.len() > 0, "initial message must be non-empty");
@@ -275,34 +238,10 @@ impl AbstractPrivKey for LedgerCap {
                 }
             };
 
-            debug!(
-                "Nervos CKB Ledger app message {:02x?} with length {:?}",
-                message,
-                message.len()
-            );
-
-            let ctx_count = parse::split_off_at(&mut message, 2)?
-                .read_u16::<BigEndian>()
-                .unwrap();
-            debug!("Nervos CKB Ledger hvave {:?} ctx tx", ctx_count);
-
-            for _ in 0..ctx_count {
-                let ctx_len = parse::split_off_at(&mut message, 2)?
-                    .read_u16::<BigEndian>()
-                    .unwrap();
-                debug!("Nervos CKB Ledger ctx raw tx length {:?}", ctx_len);
-
-                let ctx_tx = parse::split_off_at(&mut message, ctx_len as usize)?;
-                debug!("Nervos CKB Ledger ctx raw tx {:?}", ctx_tx);
-                debug!("Nervos CKB Ledger new raw tx {:?}", message);
-
-                chunk(SignP1::NEXT | SignP1::IS_CONTEXT, ctx_tx.as_ref())?;
-            }
-
             let response = chunk(SignP1::NEXT, message.as_ref())?;
 
             debug!(
-                "Nervos CKB Ledger result is {:02x?} with length {:?}",
+                "Received Nervos CKB Ledger result of {:02x?} with length {:?}",
                 response.data,
                 response.data.len()
             );

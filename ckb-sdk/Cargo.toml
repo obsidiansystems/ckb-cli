@@ -30,7 +30,7 @@ lazy_static = "1.4.0"
 void = "^1.0.2"
 dyn-clone = "1.0.1"
 
-ckb-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
+ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "82eec41f002b3ff463645eef0d257572fc92dc76" }
 ckb-script = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
 ckb-jsonrpc-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
 ckb-hash = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }

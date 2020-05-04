@@ -2,7 +2,6 @@ use secp256k1::recovery::RecoverableSignature;
 
 use dyn_clone::DynClone;
 
-use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use std::collections::{HashMap, HashSet};
 
 use ckb_hash::blake2b_256;
@@ -252,28 +251,8 @@ impl TxHelper {
             self.input_group(get_live_cell)?;
         let input_transactions = self.input_group_cell_order(get_live_cell)?;
         let make_ledger_info = |mut builder: S::SingleShot, output_idx: u32| -> Result<_, String> {
-            {
-                let mut path_data = Vec::new();
-                path_data
-                    .write_u8(change_path.as_ref().len() as u8)
-                    .expect(WRITE_ERR_MSG);
-                for &child_num in change_path.as_ref().iter() {
-                    path_data
-                        .write_u32::<BigEndian>(From::from(child_num))
-                        .expect(WRITE_ERR_MSG);
-                }
-                builder.append(&path_data);
-            }
-
-            {
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(input_transactions.len() as u16)
-                    .expect("vec as write will never fail");
-                builder.append(&length);
-            }
+            let inputs = Vec::new();
             for transaction in input_transactions.iter() {
-                let transaction = transaction.clone();
                 let ctx_raw_tx = packed::RawTransaction::new_builder()
                     .version(transaction.version.pack())
                     .cell_deps(transaction.cell_deps.into_iter().map(Into::into).pack())
@@ -282,28 +261,27 @@ impl TxHelper {
                     .outputs(transaction.outputs.into_iter().map(Into::into).pack())
                     .outputs_data(transaction.outputs_data.into_iter().map(Into::into).pack())
                     .build();
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(4 + ctx_raw_tx.as_slice().len() as u16)
-                    .expect("vec as write will never fail");
-                builder.append(&length);
-                let mut raw_id = Vec::new();
-                raw_id
-                    .write_u32::<LittleEndian>(output_idx)
-                    .expect("vec as write will never fail");
-                builder.append(&raw_id);
-                builder.append(ctx_raw_tx.as_slice());
+                let input = transaction.inputs.get(output_idx as usize);
+                inputs.append(packed::AnnotatedCellInput::new_builder()
+                              .input(input)
+                              .source(ctx_raw_tx)
+                              .build());
             }
-            let raw_tx = packed::RawTransaction::new_builder()
+
+            let raw_tx = packed::AnnotatedRawTransaction::new_builder()
                 .version(self.transaction.version().pack())
                 .cell_deps(self.transaction.cell_deps())
                 .header_deps(self.transaction.header_deps())
-                .inputs(self.transaction.inputs())
+                .inputs(packed::AnnotatedCellInputVec::from_slice(inputs))
                 .outputs(self.transaction.outputs())
                 .outputs_data(self.transaction.outputs_data())
                 .build();
+
             builder.append(
-                packed::Transaction::new_builder()
+                packed::AnnotatedTransaction::new_builder()
+                    .sign_path(packed::Bip32::from_slice(Vec::new()))
+                    .change_path(change_path)
+                    .input_count(input_cells.len())
                     .raw(raw_tx)
                     .witnesses(witnesses.clone().pack())
                     .build()
