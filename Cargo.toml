@@ -6,17 +6,17 @@ authors = ["Linfeng Qian <thewawar@gmail.com>", "Nervos Core Dev <dev@nervos.org
 edition = "2018"
 
 [dependencies]
-ckb-jsonrpc-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
-ckb-hash = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
-ckb-crypto = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1", features = ["secp"] }
-ckb-build-info = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
-ckb-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
-ckb-util = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
+ckb-jsonrpc-types = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
+ckb-hash = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
+ckb-crypto = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee", features = ["secp"] }
+ckb-build-info = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
+ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
+ckb-util = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
 ckb-sdk = { path = "ckb-sdk" }
 ckb-index = { path = "ckb-index" }
 ckb-ledger = { path = "ckb-ledger" }
-ckb-resource = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
-ckb-dao-utils = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
+ckb-resource = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
+ckb-dao-utils = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
 
 either = "1.5.3"
 jsonrpc-client-core = "0.5.0"
@@ -55,7 +55,7 @@ tui = "0.6.0"
 termion = "1.5"
 
 [build-dependencies]
-ckb-build-info = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.27.1-rc1" }
+ckb-build-info = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
 
 [workspace]
 members = ["ckb-sdk", "ckb-index", "ckb-sdk-types"]
