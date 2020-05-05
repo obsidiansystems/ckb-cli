@@ -24,6 +24,8 @@ pub mod parse;
 
 pub use error::Error as LedgerKeyStoreError;
 
+use ckb_types::{packed::{Uint32, AnnotatedTransaction, Bip32}, prelude::*};
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -213,6 +215,28 @@ impl AbstractPrivKey for LedgerCap {
                 message.len()
             );
 
+            // Need to fill in missing “path” from signer.
+            let mut raw_path = Vec::<Uint32>::new();
+            for &child_num in my_self.path.as_ref().iter() {
+                let raw_child_num: u32 = child_num.into();
+                let raw_path_bytes = raw_child_num.to_le_bytes();
+                raw_path.push(
+                    Uint32::new_builder()
+                        .nth0(raw_path_bytes[0].into())
+                        .nth1(raw_path_bytes[1].into())
+                        .nth2(raw_path_bytes[2].into())
+                        .nth3(raw_path_bytes[3].into())
+                        .build(),
+                )
+            }
+
+            let message_with_sign_path = AnnotatedTransaction::from_slice(&message).unwrap();
+
+            let raw_message = message_with_sign_path
+                .as_builder()
+                .sign_path(Bip32::new_builder().set(raw_path).build())
+                .build();
+
             let chunk = |base: SignP1, mut message: &[u8]| -> Result<_, Self::Err> {
                 assert!(message.len() > 0, "initial message must be non-empty");
                 loop {
@@ -238,7 +262,7 @@ impl AbstractPrivKey for LedgerCap {
                 }
             };
 
-            let response = chunk(SignP1::NEXT, message.as_ref())?;
+            let response = chunk(SignP1::NEXT, raw_message.as_slice().as_ref())?;
 
             debug!(
                 "Received Nervos CKB Ledger result of {:02x?} with length {:?}",

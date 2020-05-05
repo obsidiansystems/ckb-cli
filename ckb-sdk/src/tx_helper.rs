@@ -8,7 +8,7 @@ use ckb_hash::blake2b_256;
 use ckb_types::{
     bytes::Bytes,
     core::{ScriptHashType, TransactionBuilder, TransactionView},
-    packed::{self, Byte32, CellDep, CellInput, CellOutput, OutPoint, Script, WitnessArgs, Uint32, Bip32, AnnotatedCellInputVec},
+    packed::{self, Byte32, CellDep, CellInput, CellOutput, OutPoint, Script, WitnessArgs},
     prelude::*,
     H160, H256,
 };
@@ -249,22 +249,29 @@ impl TxHelper {
             self.input_group(get_live_cell)?;
         let input_cells_len = input_cells.len();
         let input_transactions = self.input_group_cell_order(get_live_cell)?;
-        let make_ledger_info = |mut builder: S::SingleShot, output_idx: u32, input_cells_len: usize| -> Result<_, String> {
+        let make_ledger_info = |mut builder: S::SingleShot,
+                                output_idx: u32,
+                                input_cells_len: usize|
+         -> Result<_, String> {
             let mut inputs = Vec::new();
             let my_input_transactions = input_transactions.clone();
             for transaction in my_input_transactions.into_iter() {
                 let input_rpc = transaction.inputs.get(output_idx as usize).unwrap();
                 let index_bytes = input_rpc.previous_output.index.to_le_bytes();
                 let input = CellInput::new_builder()
-                    .previous_output(OutPoint::new_builder()
-                                     .tx_hash(input_rpc.previous_output.tx_hash.pack())
-                                     .index(Uint32::new_builder()
-                                            .nth0(index_bytes[0].into())
-                                            .nth1(index_bytes[1].into())
-                                            .nth2(index_bytes[2].into())
-                                            .nth3(index_bytes[3].into())
-                                            .build())
-                                     .build())
+                    .previous_output(
+                        OutPoint::new_builder()
+                            .tx_hash(input_rpc.previous_output.tx_hash.pack())
+                            .index(
+                                packed::Uint32::new_builder()
+                                    .nth0(index_bytes[0].into())
+                                    .nth1(index_bytes[1].into())
+                                    .nth2(index_bytes[2].into())
+                                    .nth3(index_bytes[3].into())
+                                    .build(),
+                            )
+                            .build(),
+                    )
                     .since(input_rpc.since.0.pack())
                     .build();
                 let ctx_raw_tx = packed::RawTransaction::new_builder()
@@ -275,44 +282,52 @@ impl TxHelper {
                     .outputs(transaction.outputs.into_iter().map(Into::into).pack())
                     .outputs_data(transaction.outputs_data.into_iter().map(Into::into).pack())
                     .build();
-                inputs.push(packed::AnnotatedCellInput::new_builder()
-                            .input(input)
-                            .source(ctx_raw_tx)
-                            .build());
+                inputs.push(
+                    packed::AnnotatedCellInput::new_builder()
+                        .input(input)
+                        .source(ctx_raw_tx)
+                        .build(),
+                );
             }
 
             let raw_tx = packed::AnnotatedRawTransaction::new_builder()
                 .version(self.transaction.version().pack())
                 .cell_deps(self.transaction.cell_deps())
                 .header_deps(self.transaction.header_deps())
-                .inputs(AnnotatedCellInputVec::new_builder().set(inputs).build())
+                .inputs(
+                    packed::AnnotatedCellInputVec::new_builder()
+                        .set(inputs)
+                        .build(),
+                )
                 .outputs(self.transaction.outputs())
                 .outputs_data(self.transaction.outputs_data())
                 .build();
 
             let input_count_bytes = input_cells_len.to_le_bytes();
-            let input_count = Uint32::new_builder()
+            let input_count = packed::Uint32::new_builder()
                 .nth0(input_count_bytes[0].into())
                 .nth1(input_count_bytes[1].into())
                 .nth2(input_count_bytes[2].into())
                 .nth3(input_count_bytes[3].into())
                 .build();
 
-            let mut raw_change_path = Vec::<Uint32>::new();
+            let mut raw_change_path = Vec::<packed::Uint32>::new();
             for &child_num in change_path.as_ref().iter() {
                 let raw_child_num: u32 = child_num.into();
                 let raw_change_path_bytes = raw_child_num.to_le_bytes();
-                raw_change_path.push(Uint32::new_builder()
-                                       .nth0(raw_change_path_bytes[0].into())
-                                       .nth1(raw_change_path_bytes[1].into())
-                                       .nth2(raw_change_path_bytes[2].into())
-                                       .nth3(raw_change_path_bytes[3].into())
-                                       .build())
+                raw_change_path.push(
+                    packed::Uint32::new_builder()
+                        .nth0(raw_change_path_bytes[0].into())
+                        .nth1(raw_change_path_bytes[1].into())
+                        .nth2(raw_change_path_bytes[2].into())
+                        .nth3(raw_change_path_bytes[3].into())
+                        .build(),
+                )
             }
 
             builder.append(
                 packed::AnnotatedTransaction::new_builder()
-                    .change_path(Bip32::new_builder().set(raw_change_path).build())
+                    .change_path(packed::Bip32::new_builder().set(raw_change_path).build())
                     .input_count(input_count)
                     .raw(raw_tx)
                     .witnesses(witnesses.clone().pack())
@@ -338,7 +353,10 @@ impl TxHelper {
                 // ledger or hardware wallets, no packing both of these into 1
                 // array just to parse them apart.
                 if is_ledger {
-                    signatures.insert(lock_arg, make_ledger_info(builder, output_idx, input_cells_len)?);
+                    signatures.insert(
+                        lock_arg,
+                        make_ledger_info(builder, output_idx, input_cells_len)?,
+                    );
                 } else {
                     let signature = build_signature(
                         &self.transaction.hash(),
