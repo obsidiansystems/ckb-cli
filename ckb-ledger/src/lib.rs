@@ -237,6 +237,12 @@ impl AbstractPrivKey for LedgerCap {
                 .sign_path(Bip32::new_builder().set(raw_path).build())
                 .build();
 
+            debug!(
+                "Modified Nervos CKB Ledger app message of {:02x?} with length {:?}",
+                raw_message.as_slice(),
+                raw_message.as_slice().len()
+            );
+
             let chunk = |base: SignP1, mut message: &[u8]| -> Result<_, Self::Err> {
                 assert!(message.len() > 0, "initial message must be non-empty");
                 loop {
