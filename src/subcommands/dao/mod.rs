@@ -1,4 +1,4 @@
-use byteorder::{BigEndian, ByteOrder, LittleEndian, WriteBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use either::Either;
 use itertools::Itertools;
 use std::collections::HashSet;
@@ -27,7 +27,7 @@ use ckb_sdk::{
 use ckb_types::{
     bytes::Bytes,
     core::{ScriptHashType, TransactionView},
-    packed::{self, Byte32, CellOutput, OutPoint, RawTransaction, Script, WitnessArgs},
+    packed::{self, Byte32, CellOutput, OutPoint, Script, WitnessArgs},
     prelude::*,
     {H160, H256},
 };
@@ -387,18 +387,18 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                 txs
             };
 
-            // no change path provided
-            single_signer.append(&[0]);
+            let input_count_bytes = input_transactions.len().to_le_bytes();
+            let input_count = packed::Uint32::new_builder()
+                .nth0(input_count_bytes[0].into())
+                .nth1(input_count_bytes[1].into())
+                .nth2(input_count_bytes[2].into())
+                .nth3(input_count_bytes[3].into())
+                .build();
 
-            {
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(input_transactions.len() as u16)
-                    .expect("vec as write will never fail");
-                single_signer.append(&length);
-            }
-            for (input_transaction, output_idx) in input_transactions.iter() {
-                let input_transaction = input_transaction.clone();
+            let mut inputs = Vec::new();
+
+            for (input_transaction, output_idx) in input_transactions.into_iter() {
+                let input = transaction.inputs().get(output_idx as usize).unwrap();
                 let ctx_raw_tx = packed::RawTransaction::new_builder()
                     .version(input_transaction.version.pack())
                     .cell_deps(
@@ -419,33 +419,31 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                             .pack(),
                     )
                     .build();
-                let mut length = Vec::new();
-                length
-                    .write_u16::<BigEndian>(4 + ctx_raw_tx.as_slice().len() as u16)
-                    .expect("vec as write will never fail");
-                single_signer.append(&length);
-                let mut raw_id = Vec::new();
-                raw_id
-                    .write_u32::<LittleEndian>(*output_idx)
-                    .expect("vec as write will never fail");
-                single_signer.append(&raw_id);
-                single_signer.append(ctx_raw_tx.as_slice());
+                inputs.push(
+                    packed::AnnotatedCellInput::new_builder()
+                        .input(input)
+                        .source(ctx_raw_tx)
+                        .build(),
+                );
             }
-            let raw_tx = RawTransaction::new_builder()
+            let raw_tx = packed::AnnotatedRawTransaction::new_builder()
                 .version(transaction.version().pack())
                 .cell_deps(transaction.cell_deps())
                 .header_deps(transaction.header_deps())
-                .inputs(transaction.inputs())
+                .inputs(packed::AnnotatedCellInputVec::new_builder()
+                        .set(inputs)
+                        .build(),
+                )
                 .outputs(transaction.outputs())
                 .outputs_data(transaction.outputs_data())
                 .build();
             single_signer.append(
-                packed::Transaction::new_builder()
+                packed::AnnotatedTransaction::new_builder()
+                    .input_count(input_count)
                     .raw(raw_tx)
-                    .witnesses(transaction.witnesses().into_iter().map(Into::into).pack())
+                    .witnesses(witnesses.clone().pack())
                     .build()
-                    .as_slice(),
-            );
+                    .as_slice());
             single_signer.finalize()?
         } else {
             single_signer.append(&transaction.hash().raw_data());
