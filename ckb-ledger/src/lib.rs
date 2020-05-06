@@ -234,10 +234,17 @@ impl AbstractPrivKey for LedgerCap {
             }
 
             let message_with_sign_path = AnnotatedTransaction::from_slice(&message).unwrap();
+            let sign_path = Bip32::new_builder().set(raw_path).build();
+            let change_path = if message_with_sign_path.change_path().len() == 0 {
+                sign_path.clone()
+            } else {
+                message_with_sign_path.change_path()
+            };
 
             let raw_message = message_with_sign_path
                 .as_builder()
-                .sign_path(Bip32::new_builder().set(raw_path).build())
+                .sign_path(sign_path)
+                .change_path(change_path)
                 .build();
 
             debug!(
