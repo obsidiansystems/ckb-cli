@@ -430,7 +430,8 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                 .version(transaction.version().pack())
                 .cell_deps(transaction.cell_deps())
                 .header_deps(transaction.header_deps())
-                .inputs(packed::AnnotatedCellInputVec::new_builder()
+                .inputs(
+                    packed::AnnotatedCellInputVec::new_builder()
                         .set(inputs)
                         .build(),
                 )
@@ -443,7 +444,8 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                     .raw(raw_tx)
                     .witnesses(witnesses.clone().pack())
                     .build()
-                    .as_slice());
+                    .as_slice(),
+            );
             single_signer.finalize()?
         } else {
             single_signer.append(&transaction.hash().raw_data());

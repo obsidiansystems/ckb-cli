@@ -24,7 +24,10 @@ pub mod parse;
 
 pub use error::Error as LedgerKeyStoreError;
 
-use ckb_types::{packed::{Uint32, AnnotatedTransaction, Bip32}, prelude::*};
+use ckb_types::{
+    packed::{AnnotatedTransaction, Bip32, Uint32},
+    prelude::*,
+};
 
 #[cfg(test)]
 mod tests {
@@ -245,7 +248,7 @@ impl AbstractPrivKey for LedgerCap {
 
             let chunk = |mut message: &[u8]| -> Result<_, Self::Err> {
                 assert!(message.len() > 0, "initial message must be non-empty");
-                let mut base=SignP1::FIRST;
+                let mut base = SignP1::FIRST;
                 loop {
                     let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
                     let chunk = parse::split_off_at(&mut message, length)?;
@@ -266,7 +269,7 @@ impl AbstractPrivKey for LedgerCap {
                     if rest_length == 0 {
                         return Ok(response);
                     }
-                    base=SignP1::NEXT;
+                    base = SignP1::NEXT;
                 }
             };
 
