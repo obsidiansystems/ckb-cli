@@ -27,7 +27,7 @@ use ckb_sdk::{
 use ckb_types::{
     bytes::Bytes,
     core::{ScriptHashType, TransactionView},
-    packed::{self, Byte32, CellOutput, OutPoint, Script, WitnessArgs},
+    packed::{self, Byte32, CellInput, CellOutput, OutPoint, Script, WitnessArgs},
     prelude::*,
     {H160, H256},
 };
@@ -377,12 +377,12 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
         };
 
         let signature = if is_ledger {
-            let input_transactions: Vec<(Transaction, u32)> = {
+            let input_transactions: Vec<(Transaction, CellInput)> = {
                 let mut txs = Vec::new();
                 for (_idx, input) in transaction.inputs().into_iter().enumerate() {
                     let ((_cell_output, cell_transaction), _) =
                         get_live_cell(self.dao.rpc_client, input.previous_output(), false)?;
-                    txs.push((cell_transaction, input.previous_output().index().unpack()));
+                    txs.push((cell_transaction, input));
                 }
                 txs
             };
@@ -397,8 +397,7 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
 
             let mut inputs = Vec::new();
 
-            for (input_transaction, output_idx) in input_transactions.into_iter() {
-                let input = transaction.inputs().get(output_idx as usize).unwrap();
+            for (input_transaction, input) in input_transactions.into_iter() {
                 inputs.push(
                     packed::AnnotatedCellInput::new_builder()
                         .input(input)
