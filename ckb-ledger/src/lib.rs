@@ -243,8 +243,9 @@ impl AbstractPrivKey for LedgerCap {
                 raw_message.as_slice().len()
             );
 
-            let chunk = |base: SignP1, mut message: &[u8]| -> Result<_, Self::Err> {
+            let chunk = |mut message: &[u8]| -> Result<_, Self::Err> {
                 assert!(message.len() > 0, "initial message must be non-empty");
+                let mut base=SignP1::FIRST;
                 loop {
                     let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
                     let chunk = parse::split_off_at(&mut message, length)?;
@@ -265,10 +266,11 @@ impl AbstractPrivKey for LedgerCap {
                     if rest_length == 0 {
                         return Ok(response);
                     }
+                    base=SignP1::NEXT;
                 }
             };
 
-            let response = chunk(SignP1::NEXT, raw_message.as_slice().as_ref())?;
+            let response = chunk(raw_message.as_slice().as_ref())?;
 
             debug!(
                 "Received Nervos CKB Ledger result of {:02x?} with length {:?}",
