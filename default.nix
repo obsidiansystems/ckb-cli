@@ -17,9 +17,9 @@
 
 # Rust manifest hash must be updated when rust-toolchain file changes.
 , rustPackages ? rustOverlay.rustChannelOf {
-    date = "2019-09-26";
+    date = "2020-05-04";
     rustToolchain = ./rust-toolchain;
-    sha256 = "1x22rf6ahb4cniykfz3ml7w0hh226pcig154xbcf5cg7j4k72rig";
+    sha256 = "sha256-Pj5c6sufuY0IZg/NwiVUqOB0z85OlLDrGbWyYYk9tx4=";
   }
 
 , gitignoreNix ? fetch (builtins.fromJSON (builtins.readFile ./nix/gitignore.nix/github.json))
@@ -40,5 +40,5 @@ in rustPlatform.buildRustPackage {
   verifyCargoDeps = true;
 
   # Cargo hash must be updated when Cargo.lock file changes.
-  cargoSha256 = "1sbkmdpn9v026abz8zp41y6c8bkdxyvmmmmxw6h7ssdf9j0f9bag";
+  cargoSha256 = "sha256-06CgLoPHGZfrZ1BiRIbWfoWybWEOYmevPh0/kJpdpNc=";
 }
