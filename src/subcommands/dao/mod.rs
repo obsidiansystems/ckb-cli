@@ -399,30 +399,10 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
 
             for (input_transaction, output_idx) in input_transactions.into_iter() {
                 let input = transaction.inputs().get(output_idx as usize).unwrap();
-                let ctx_raw_tx = packed::RawTransaction::new_builder()
-                    .version(input_transaction.version.pack())
-                    .cell_deps(
-                        input_transaction
-                            .cell_deps
-                            .into_iter()
-                            .map(Into::into)
-                            .pack(),
-                    )
-                    .header_deps(input_transaction.header_deps.iter().map(Pack::pack).pack())
-                    .inputs(input_transaction.inputs.into_iter().map(Into::into).pack())
-                    .outputs(input_transaction.outputs.into_iter().map(Into::into).pack())
-                    .outputs_data(
-                        input_transaction
-                            .outputs_data
-                            .into_iter()
-                            .map(Into::into)
-                            .pack(),
-                    )
-                    .build();
                 inputs.push(
                     packed::AnnotatedCellInput::new_builder()
                         .input(input)
-                        .source(ctx_raw_tx)
+                        .source(packed::Transaction::from(input_transaction.clone()).raw())
                         .build(),
                 );
             }

@@ -257,35 +257,10 @@ impl TxHelper {
             let my_input_transactions = input_transactions.clone();
             for transaction in my_input_transactions.into_iter() {
                 let input_rpc = transaction.inputs.get(output_idx as usize).unwrap();
-                let index_bytes = input_rpc.previous_output.index.to_le_bytes();
-                let input = CellInput::new_builder()
-                    .previous_output(
-                        OutPoint::new_builder()
-                            .tx_hash(input_rpc.previous_output.tx_hash.pack())
-                            .index(
-                                packed::Uint32::new_builder()
-                                    .nth0(index_bytes[0].into())
-                                    .nth1(index_bytes[1].into())
-                                    .nth2(index_bytes[2].into())
-                                    .nth3(index_bytes[3].into())
-                                    .build(),
-                            )
-                            .build(),
-                    )
-                    .since(input_rpc.since.0.pack())
-                    .build();
-                let ctx_raw_tx = packed::RawTransaction::new_builder()
-                    .version(transaction.version.pack())
-                    .cell_deps(transaction.cell_deps.into_iter().map(Into::into).pack())
-                    .header_deps(transaction.header_deps.iter().map(Pack::pack).pack())
-                    .inputs(transaction.inputs.into_iter().map(Into::into).pack())
-                    .outputs(transaction.outputs.into_iter().map(Into::into).pack())
-                    .outputs_data(transaction.outputs_data.into_iter().map(Into::into).pack())
-                    .build();
                 inputs.push(
                     packed::AnnotatedCellInput::new_builder()
-                        .input(input)
-                        .source(ctx_raw_tx)
+                        .input(packed::CellInput::from(input_rpc.clone()))
+                        .source(packed::Transaction::from(transaction.clone()).raw())
                         .build(),
                 );
             }
