@@ -276,7 +276,6 @@ pub fn hash_publick_key(public_key: &secp256k1::PublicKey) -> H160 {
 pub const MANDATORY_PREFIX: &[ChildNumber] = &[
     ChildNumber::Hardened { index: 44 },
     ChildNumber::Hardened { index: 309 },
-    ChildNumber::Hardened { index: 0 },
 ];
 
 pub fn is_valid_derivation_path(path: &[ChildNumber]) -> bool {
