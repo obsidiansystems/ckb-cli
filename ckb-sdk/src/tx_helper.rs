@@ -115,7 +115,7 @@ impl TxHelper {
 
         self.transaction = self.transaction.as_advanced_builder().input(input).build();
         let mut cell_deps: HashSet<CellDep> = HashSet::default();
-        for ((code_hash, _, _), _) in self.input_group(get_live_cell)?.into_iter() {
+        for ((code_hash, _), _) in self.input_group(get_live_cell)?.into_iter() {
             let code_hash: H256 = code_hash.unpack();
             if code_hash == SIGHASH_TYPE_HASH {
                 cell_deps.insert(genesis_info.sighash_dep());
@@ -187,8 +187,8 @@ impl TxHelper {
     pub fn input_group<F: FnMut(OutPoint, bool) -> Result<(CellOutput, Transaction), String>>(
         &self,
         get_live_cell: &mut F,
-    ) -> Result<HashMap<(Byte32, Bytes, u32), Vec<usize>>, String> {
-        let mut input_group: HashMap<(Byte32, Bytes, u32), Vec<usize>> = HashMap::default();
+    ) -> Result<HashMap<(Byte32, Bytes), Vec<usize>>, String> {
+        let mut input_group: HashMap<(Byte32, Bytes), Vec<usize>> = HashMap::default();
         for (idx, input) in self.transaction.inputs().into_iter().enumerate() {
             let (cell_output, _cell_transaction) = get_live_cell(input.previous_output(), false)?;
             let lock = cell_output.lock();
@@ -210,7 +210,6 @@ impl TxHelper {
                 .entry((
                     code_hash,
                     lock_arg,
-                    input.previous_output().index().unpack(),
                 ))
                 .or_default()
                 .push(idx);
@@ -245,12 +244,11 @@ impl TxHelper {
 
         let witnesses = self.init_witnesses();
         let mut signatures: HashMap<Bytes, RecoverableSignature> = Default::default();
-        let input_cells: HashMap<(Byte32, Bytes, u32), Vec<usize>> =
+        let input_cells: HashMap<(Byte32, Bytes), Vec<usize>> =
             self.input_group(get_live_cell)?;
-        let input_cells_len = input_cells.len();
         let input_transactions = self.input_group_cell_order(get_live_cell)?;
         let make_ledger_info =
-            |mut builder: S::SingleShot, input_cells_len: usize| -> Result<_, String> {
+            |mut builder: S::SingleShot| -> Result<_, String> {
                 let mut inputs = Vec::new();
                 let my_input_transactions = input_transactions.clone();
                 for (transaction, input) in my_input_transactions
@@ -278,7 +276,7 @@ impl TxHelper {
                     .outputs_data(self.transaction.outputs_data())
                     .build();
 
-                let input_count_bytes = input_cells_len.to_le_bytes();
+                let input_count_bytes = self.transaction.inputs().len().to_le_bytes();
                 let input_count = packed::Uint32::new_builder()
                     .nth0(input_count_bytes[0].into())
                     .nth1(input_count_bytes[1].into())
@@ -311,7 +309,7 @@ impl TxHelper {
                 );
                 Box::new(builder).finalize()
             };
-        for ((code_hash, lock_arg, _), idxs) in input_cells.into_iter() {
+        for ((code_hash, lock_arg), idxs) in input_cells.into_iter() {
             let multisig_hash160 = H160::from_slice(&lock_arg[..20]).unwrap();
             let lock_args = if code_hash == MULTISIG_TYPE_HASH.pack() {
                 all_sighash_lock_args
@@ -328,7 +326,7 @@ impl TxHelper {
                 // ledger or hardware wallets, no packing both of these into 1
                 // array just to parse them apart.
                 if is_ledger {
-                    signatures.insert(lock_arg, make_ledger_info(builder, input_cells_len)?);
+                    signatures.insert(lock_arg, make_ledger_info(builder)?);
                 } else {
                     let signature = build_signature(
                         &self.transaction.hash(),
@@ -349,7 +347,7 @@ impl TxHelper {
         get_live_cell: &mut F,
     ) -> Result<TransactionView, String> {
         let mut witnesses = self.init_witnesses();
-        for ((code_hash, lock_arg, _), idxs) in self.input_group(get_live_cell)?.into_iter() {
+        for ((code_hash, lock_arg), idxs) in self.input_group(get_live_cell)?.into_iter() {
             let signatures = self.signatures.get(&lock_arg).ok_or_else(|| {
                 let lock_script = Script::new_builder()
                     .hash_type(ScriptHashType::Type.into())
