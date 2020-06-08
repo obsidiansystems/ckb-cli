@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::convert::TryInto;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -10,10 +11,11 @@ use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::Recove
 
 use ckb_sdk::wallet::{
     is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey,
-    ChildNumber, DerivationPath, ScryptType,
+    ChildNumber, DerivationPath, ScryptType, ExtendedPubKey, ChainCode, Fingerprint,
 };
 use ckb_sdk::SignEntireHelper;
-use ckb_types::H256;
+use ckb_types::{H160, H256};
+use bitcoin_hashes::{hash160, Hash};
 
 use ledger::ApduCommand;
 use ledger::LedgerApp as RawLedgerApp;
@@ -145,6 +147,50 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         Ok(LedgerCap {
             master: self.clone(),
             path: From::from(path.as_ref()),
+        })
+    }
+    fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
+        if !is_valid_derivation_path(path.as_ref()) {
+            return Err(LedgerKeyStoreError::InvalidDerivationPath {
+                path: path.as_ref().iter().cloned().collect(),
+            });
+        }
+        let mut data = Vec::new();
+        data.write_u8(path.as_ref().len() as u8)
+            .expect(WRITE_ERR_MSG);
+        for &child_num in path.as_ref().iter() {
+            data.write_u32::<BigEndian>(From::from(child_num))
+                .expect(WRITE_ERR_MSG);
+        }
+        let command = apdu::get_extended_public_key(data);
+        let response = self.ledger_app.exchange(command)?;
+        debug!(
+            "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
+            &response, &path
+        );
+        let mut resp = &response.data[..];
+        let len1 = parse::split_first(&mut resp)? as usize;
+        let raw_public_key = parse::split_off_at(&mut resp, len1)?;
+        let len2 = parse::split_first(&mut resp)? as usize;
+        let chain_code = parse::split_off_at(&mut resp, len2)?;
+        parse::assert_nothing_left(resp)?;
+        let public_key = PublicKey::from_slice(&raw_public_key)?;
+        let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
+        Ok (ExtendedPubKey {
+            depth: path.as_ref().len() as u8,
+            parent_fingerprint: {
+                let mut engine = hash160::Hash::engine();
+                engine
+                    .write_all(b"`parent_fingerprint` currently unused by Nervos.")
+                    .expect("write must ok");
+                Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
+            },
+            child_number: path
+                .last()
+                .unwrap_or(&ChildNumber::Hardened { index: 0 })
+                .clone(),
+            public_key,
+            chain_code,
         })
     }
 }
