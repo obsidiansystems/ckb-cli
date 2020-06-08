@@ -88,7 +88,7 @@ pub trait AbstractMasterPrivKey: DynClone {
 
     fn derived_pubkey_hash(&self, path: &[ChildNumber]) -> Result<H160, Self::Err> {
         let extended_public_key = self.extended_pubkey(path)?;
-        Ok(hash_publick_key(&extended_public_key.public_key))
+        Ok(hash_public_key(&extended_public_key.public_key))
     }
 
     fn derived_key_set(
@@ -268,7 +268,7 @@ impl DerivedKeySet {
 #[fail(display = "Search derived address failed")]
 pub struct SearchDerivedAddrFailed;
 
-pub fn hash_publick_key(public_key: &secp256k1::PublicKey) -> H160 {
+pub fn hash_public_key(public_key: &secp256k1::PublicKey) -> H160 {
     H160::from_slice(&blake2b_256(&public_key.serialize()[..])[0..20])
         .expect("Generate hash(H160) from pubkey failed")
 }
