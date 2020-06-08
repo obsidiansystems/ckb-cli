@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::fs;
+use std::io::prelude::{Write};
 use std::convert::TryInto;
+use std::str::FromStr;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -40,6 +43,7 @@ mod tests {
 }
 
 pub struct LedgerKeyStore {
+    data_dir: PathBuf, // For storing extended public keys, never stores any private key
     discovered_devices: HashMap<LedgerId, LedgerMasterCap>,
 }
 
@@ -48,8 +52,9 @@ pub struct LedgerKeyStore {
 pub struct LedgerId(pub H256);
 
 impl LedgerKeyStore {
-    fn new() -> Self {
+    fn new(dir: PathBuf) -> Self {
         LedgerKeyStore {
+            data_dir: dir.clone(),
             discovered_devices: HashMap::new(),
         }
     }
@@ -64,6 +69,35 @@ impl LedgerKeyStore {
         }
         Ok(())
     }
+
+    pub fn import_account<'a, 'b>(
+        &'a mut self,
+        account_id: &'b LedgerId,
+    ) -> Result<H160, LedgerKeyStoreError> {
+        self.refresh()?;
+        let ledger_app = self.discovered_devices
+            .get(account_id)
+            .ok_or_else(|| LedgerKeyStoreError::LedgerNotFound {
+                id: account_id.clone(),
+            })?;
+        let bip_account_id = 0;
+        let external_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 0);
+        let change_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 1);
+        let external_path = DerivationPath::from_str(external_path_string.as_str()).unwrap();
+        let change_path = DerivationPath::from_str(change_path_string.as_str()).unwrap();
+        let ext_pub_key_external = ledger_app.extended_pubkey(external_path.as_ref())?;
+        let ext_pub_key_change = ledger_app.extended_pubkey(change_path.as_ref())?;
+
+        let LedgerId (ledger_id) = account_id;
+        let filepath = self.data_dir.join(ledger_id.to_string());
+        fs::File::create(&filepath).and_then(|mut file| file.write_all(b"test-data"));
+        // let json_value = serde_json::json!({
+        //     "public_key": "test",
+        // };
+        // serde_json::to_writer(&mut file, &json_value).map_err(|err| Error::Io(err.to_string()))?;
+        Err(LedgerKeyStoreError::LedgerNotFound { id: account_id.clone()})
+    }
+
 }
 
 impl AbstractKeyStore for LedgerKeyStore {
@@ -81,9 +115,10 @@ impl AbstractKeyStore for LedgerKeyStore {
         Ok(Box::new(key_copies.into_iter()))
     }
 
-    fn from_dir(_dir: PathBuf, _scrypt_type: ScryptType) -> Result<Self, LedgerKeyStoreError> {
+    fn from_dir(dir: PathBuf, _scrypt_type: ScryptType) -> Result<Self, LedgerKeyStoreError> {
+        // let abs_dir = dir.canonicalize()?;
         // TODO maybe force the initialization of the HidAPI "lazy static"?
-        Ok(LedgerKeyStore::new())
+        Ok(LedgerKeyStore::new(dir))
     }
 
     fn borrow_account<'a, 'b>(
@@ -149,6 +184,7 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
             path: From::from(path.as_ref()),
         })
     }
+
     fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
         if !is_valid_derivation_path(path.as_ref()) {
             return Err(LedgerKeyStoreError::InvalidDerivationPath {
