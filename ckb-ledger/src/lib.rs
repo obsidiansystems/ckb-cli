@@ -81,21 +81,38 @@ impl LedgerKeyStore {
                 id: account_id.clone(),
             })?;
         let bip_account_id = 0;
-        let external_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 0);
+        let bip_account_path_string = format!("m/44'/309'/{}'", bip_account_id);
+        let normal_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 0);
         let change_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 1);
-        let external_path = DerivationPath::from_str(external_path_string.as_str()).unwrap();
+        let bip_account_path = DerivationPath::from_str(bip_account_path_string.as_str()).unwrap();
+        let normal_path = DerivationPath::from_str(normal_path_string.as_str()).unwrap();
         let change_path = DerivationPath::from_str(change_path_string.as_str()).unwrap();
-        let ext_pub_key_external = ledger_app.extended_pubkey(external_path.as_ref())?;
+
+        let pub_key_normal = ledger_app.extended_privkey(bip_account_path.as_ref())?.public_key()?;
+        let ext_pub_key_normal = ledger_app.extended_pubkey(normal_path.as_ref())?;
         let ext_pub_key_change = ledger_app.extended_pubkey(change_path.as_ref())?;
 
         let LedgerId (ledger_id) = account_id;
         let filepath = self.data_dir.join(ledger_id.to_string());
-        fs::File::create(&filepath).and_then(|mut file| file.write_all(b"test-data"));
-        // let json_value = serde_json::json!({
-        //     "public_key": "test",
-        // };
-        // serde_json::to_writer(&mut file, &json_value).map_err(|err| Error::Io(err.to_string()))?;
-        Err(LedgerKeyStoreError::LedgerNotFound { id: account_id.clone()})
+        let lock_arg = ckb_sdk::wallet::hash_public_key(&pub_key_normal);
+        let ext_pub_key_normal = serde_json::json!({
+            "address" : ext_pub_key_normal.public_key.to_string(),
+            "chain-code" : (|ChainCode (bytes)| bytes) (ext_pub_key_normal.chain_code),
+        });
+        let ext_pub_key_change = serde_json::json!({
+            "address" : ext_pub_key_change.public_key.to_string(),
+            "chain-code" : (|ChainCode (bytes)| bytes) (ext_pub_key_change.chain_code),
+        });
+        let json_value = serde_json::json!({
+            "ledger-id" : ledger_id,
+            "lock_arg" : lock_arg,
+            "extended_public_key_normal": ext_pub_key_normal,
+            "extended_public_key_change": ext_pub_key_change,
+        });
+        fs::File::create(&filepath)
+            .and_then(|mut file| file.write_all(json_value.to_string().as_bytes()))
+            .map_err(|err| LedgerKeyStoreError::KeyStoreIOError{err})?;
+        Ok(lock_arg)
     }
 
 }
