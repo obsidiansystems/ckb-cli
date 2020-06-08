@@ -33,6 +33,8 @@ pub enum Error {
         _0
     )]
     InvalidDerivationPath { path: DerivationPath },
+    #[fail(display = "IO Error while doing Ledger KeyStore operation : {}", _0)]
+    KeyStoreIOError { err: std::io::Error },
 }
 
 impl From<RawLedgerError> for Error {
