@@ -44,6 +44,20 @@ pub fn get_extended_public_key(data: Vec<u8>) -> ledger::ApduCommand {
     }
 }
 
+// BIP44 account_index, starts 0
+pub fn do_account_import(account_index: u32) -> ledger::ApduCommand {
+    let mut vec = Vec::new();
+    vec.extend_from_slice(&account_index.to_be_bytes());
+    ApduCommand {
+        cla: 0x80,
+        ins: 0x05,
+        p1: 0x00,
+        p2: 0x00,
+        length: 4,
+        data: vec,
+    }
+}
+
 pub fn get_wallet_id() -> ledger::ApduCommand {
     ApduCommand {
         cla: 0x80,
