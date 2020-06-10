@@ -138,7 +138,7 @@ impl LedgerKeyStore {
         self.imported_accounts.insert(lock_arg.clone(), ledger_account);
         fs::File::create(&filepath)
             .and_then(|mut file| file.write_all(json_value.to_string().as_bytes()))
-            .map_err(|err| LedgerKeyStoreError::KeyStoreIOError{err})?;
+            .map_err(|err| LedgerKeyStoreError::KeyStoreIOError(err))?;
         Ok(lock_arg)
     }
 
