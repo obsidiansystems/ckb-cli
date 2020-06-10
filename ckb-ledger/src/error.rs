@@ -35,6 +35,8 @@ pub enum Error {
     InvalidDerivationPath { path: DerivationPath },
     #[fail(display = "IO Error while doing Ledger KeyStore operation : {}", _0)]
     KeyStoreIOError { err: std::io::Error },
+    #[fail(display = "Error while doing Json decoding : {}", _0)]
+    JsonDecodeError (serde_json::error::Error),
 }
 
 impl From<RawLedgerError> for Error {
@@ -52,5 +54,11 @@ impl From<Bip32Error> for Error {
 impl From<secp256k1::Error> for Error {
     fn from(err: secp256k1::Error) -> Self {
         Error::Secp256k1Error(err)
+    }
+}
+
+impl From<serde_json::error::Error> for Error {
+    fn from(err: serde_json::error::Error) -> Self {
+        Error::JsonDecodeError(err)
     }
 }
