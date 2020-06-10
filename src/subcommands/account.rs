@@ -282,8 +282,10 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     }
                 };
                 let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
+                let lock_hash: H256 = Script::from(&address_payload).calc_script_hash().unpack();
                 let resp = serde_json::json!({
                     "lock_arg": format!("{:x}", lock_arg),
+                    "lock_hash": format!("{:#x}", lock_hash),
                     "address": {
                         "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
                         "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
