@@ -9,6 +9,7 @@ use std::str::FromStr;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
+use either::{Either, Either::{Left, Right}};
 use log::debug;
 use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::RecoveryId, Signature};
 
@@ -167,14 +168,22 @@ impl AbstractKeyStore for LedgerKeyStore {
 
     type Err = LedgerKeyStoreError;
 
-    type AccountId = LedgerId;
+    type AccountId = Either <H160, LedgerId>;
 
     type AccountCap = LedgerMasterCap;
 
     fn list_accounts(&mut self) -> Result<Box<dyn Iterator<Item = Self::AccountId>>, Self::Err> {
         self.refresh()?;
-        let key_copies: Vec<_> = self.discovered_devices.keys().cloned().collect();
-        Ok(Box::new(key_copies.into_iter()))
+        let accounts: Vec<_> = self.discovered_devices.keys()
+            .map(|k|
+                 if let Some (acc) = self.imported_accounts.values()
+                 .find(|acc| &acc.ledger_id == k) {
+                     Left (acc.lock_arg.clone())
+                 } else {
+                     Right (k.clone())
+                 }
+            ).collect();
+        Ok(Box::new(accounts.into_iter()))
     }
 
     fn from_dir(dir: PathBuf, _scrypt_type: ScryptType) -> Result<Self, LedgerKeyStoreError> {
@@ -188,10 +197,19 @@ impl AbstractKeyStore for LedgerKeyStore {
         account_id: &'b Self::AccountId,
     ) -> Result<&'a Self::AccountCap, Self::Err> {
         self.refresh()?;
+        let ledger_id = match account_id {
+            Left (lock_arg) => {
+                let acc = self.imported_accounts
+                    .get(lock_arg)
+                    .ok_or_else(|| LedgerKeyStoreError::LedgerAccountNotFound (lock_arg.clone()))?;
+                &acc.ledger_id
+            },
+            Right (id) => id,
+        };
         self.discovered_devices
-            .get(account_id)
+            .get(ledger_id)
             .ok_or_else(|| LedgerKeyStoreError::LedgerNotFound {
-                id: account_id.clone(),
+                id: ledger_id.clone(),
             })
     }
 }

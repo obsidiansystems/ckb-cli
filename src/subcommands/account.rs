@@ -12,6 +12,7 @@ use ckb_sdk::{
 };
 use ckb_types::{packed::Script, prelude::*, H160, H256};
 use clap::{App, Arg, ArgMatches, SubCommand};
+use either::Either::{Left, Right};
 
 use super::CliSubCommand;
 use crate::utils::{
@@ -197,11 +198,28 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                         }
                     })
                     .chain(list_accounts_with_source(self.ledger_key_store)?
-                           .map(|(LedgerId(ledger_id), source)| {
-                               let v = serde_json::json!({
-                                   "ledger_id": ledger_id,
-                                   "account_source": source,
-                               });
+                           .map(|(account, source)| {
+                               let v = match account {
+                                   Left (lock_arg) => {
+                                       let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
+                                       let lock_hash: H256 = Script::from(&address_payload)
+                                           .calc_script_hash()
+                                           .unpack();
+                                       serde_json::json!({
+                                           "lock_arg": format!("{:#x}", lock_arg),
+                                           "lock_hash": format!("{:#x}", lock_hash),
+                                           "address": {
+                                               "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
+                                               "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
+                                           },
+                                           "account_source": source,
+                                       })
+                                   },
+                                   Right (LedgerId (ledger_id)) => serde_json::json!({
+                                       "ledger_id": ledger_id,
+                                       "account_source": source,
+                                   }),
+                               };
                                match v {
                                    serde_json::Value::Object(m) => m,
                                    _ => panic!("We should have written a panic above."),
@@ -406,7 +424,7 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     ),
                     AccountId::LedgerId(ledger_id) => (
                         self.ledger_key_store
-                            .borrow_account(&ledger_id)
+                            .borrow_account(&Right (ledger_id))
                             .map_err(|err| err.to_string())?
                             .extended_pubkey(path.as_ref())
                             .map_err(|err| err.to_string())?,

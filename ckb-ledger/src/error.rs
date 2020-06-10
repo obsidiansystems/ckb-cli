@@ -1,6 +1,7 @@
 use ::std::fmt::Debug;
 
 use ckb_sdk::wallet::{Bip32Error, DerivationPath};
+use ckb_types::H160;
 
 use failure::Fail;
 
@@ -14,6 +15,8 @@ pub enum Error {
     RawLedgerError(RawLedgerError),
     #[fail(display = "Ledger with id {:?} not found", _0)]
     LedgerNotFound { id: LedgerId },
+    #[fail(display = "Ledger account for lock_arg: {:?} not found", _0)]
+    LedgerAccountNotFound ( H160 ),
     #[fail(display = "Error in client-side BIP-32 calculations: {}", _0)]
     Bip32Error(Bip32Error),
     #[fail(display = "Error in secp256k1 marshalling: {}", _0)]

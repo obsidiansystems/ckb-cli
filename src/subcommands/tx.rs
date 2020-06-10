@@ -25,6 +25,7 @@ use ckb_types::{
 use clap::{App, Arg, ArgMatches, SubCommand};
 use faster_hex::hex_string;
 use serde_derive::{Deserialize, Serialize};
+use either::Either::Right;
 
 use super::{account::AccountId, CliSubCommand};
 use crate::utils::{
@@ -500,7 +501,7 @@ impl<'a> CliSubCommand for TxSubCommand<'a> {
                         }
                         AccountId::LedgerId(ref ledger_id) => {
                             let key = ledger_key_store
-                                .borrow_account(&ledger_id)
+                                .borrow_account(&Right (ledger_id.clone()))
                                 .map_err(|e| e.to_string())?
                                 .clone();
                             Box::new(KeyAdapter(get_master_key_signer_raw(key, path)?))
