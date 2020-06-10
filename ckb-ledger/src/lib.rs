@@ -53,7 +53,7 @@ pub struct LedgerKeyStore {
 struct LedgerImportedAccount {
     ledger_id: LedgerId,
     lock_arg: H160,
-    ext_pub_key_normal: ExtendedPubKey,
+    ext_pub_key_external: ExtendedPubKey,
     ext_pub_key_change: ExtendedPubKey,
 }
 
@@ -124,7 +124,7 @@ impl LedgerKeyStore {
             let raw_public_key = parse::split_off_at(&mut resp, len)?;
             PublicKey::from_slice(&raw_public_key)?
         };
-        let ext_pub_key_normal = {
+        let ext_pub_key_external = {
             let len1 = parse::split_first(&mut resp)? as usize;
             let raw_public_key = parse::split_off_at(&mut resp, len1)?;
             let len2 = parse::split_first(&mut resp)? as usize;
@@ -150,7 +150,7 @@ impl LedgerKeyStore {
         let ledger_account = LedgerImportedAccount {
             ledger_id: account_id.clone(),
             lock_arg: lock_arg.clone(),
-            ext_pub_key_normal,
+            ext_pub_key_external,
             ext_pub_key_change,
         };
         let json_value = ledger_imported_account_to_json(&ledger_account)?;
@@ -466,7 +466,7 @@ impl AbstractPrivKey for LedgerCap {
 struct LedgerAccountJson {
     ledger_id: H256,
     lock_arg: H160,
-    extended_public_key_normal: LedgerAccountExtendedPubKeyJson,
+    extended_public_key_external: LedgerAccountExtendedPubKeyJson,
     extended_public_key_change: LedgerAccountExtendedPubKeyJson,
 }
 
@@ -479,9 +479,9 @@ struct LedgerAccountExtendedPubKeyJson {
 fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serde_json::Value, serde_json::error::Error> {
     let LedgerId (ledger_id) = inp.ledger_id.clone();
     let lock_arg = inp.lock_arg.clone();
-    let extended_public_key_normal = LedgerAccountExtendedPubKeyJson {
-        address: inp.ext_pub_key_normal.public_key.to_string(),
-        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_normal.chain_code),
+    let extended_public_key_external = LedgerAccountExtendedPubKeyJson {
+        address: inp.ext_pub_key_external.public_key.to_string(),
+        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_external.chain_code),
     };
     let extended_public_key_change = LedgerAccountExtendedPubKeyJson {
         address: inp.ext_pub_key_change.public_key.to_string(),
@@ -490,7 +490,7 @@ fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serd
     serde_json::to_value(LedgerAccountJson {
         ledger_id,
         lock_arg,
-        extended_public_key_normal,
+        extended_public_key_external,
         extended_public_key_change,
     })
 }
@@ -504,12 +504,12 @@ fn ledger_imported_account_from_json ( inp: &String) -> Result<LedgerImportedAcc
         Ok(to_ext_pub_key (pub_key, chain_code, is_change))
     };
 
-    let ext_pub_key_normal = get_ext_pub_key(&acc.extended_public_key_normal, false)?;
+    let ext_pub_key_external = get_ext_pub_key(&acc.extended_public_key_external, false)?;
     let ext_pub_key_change = get_ext_pub_key(&acc.extended_public_key_change, true)?;
     Ok(LedgerImportedAccount {
         ledger_id : LedgerId (acc.ledger_id),
         lock_arg: acc.lock_arg,
-        ext_pub_key_normal,
+        ext_pub_key_external,
         ext_pub_key_change,
     })
 }
