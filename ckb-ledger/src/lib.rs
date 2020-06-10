@@ -46,6 +46,7 @@ mod tests {
 pub struct LedgerKeyStore {
     data_dir: PathBuf, // For storing extended public keys, never stores any private key
     discovered_devices: HashMap<LedgerId, LedgerMasterCap>,
+    imported_accounts: HashMap<H160, LedgerImportedAccount>,
 }
 
 struct LedgerImportedAccount {
@@ -64,6 +65,7 @@ impl LedgerKeyStore {
         LedgerKeyStore {
             data_dir: dir.clone(),
             discovered_devices: HashMap::new(),
+            imported_accounts: HashMap::new(),
         }
     }
 
@@ -88,35 +90,52 @@ impl LedgerKeyStore {
             .ok_or_else(|| LedgerKeyStoreError::LedgerNotFound {
                 id: account_id.clone(),
             })?;
-        let bip_account_id = 0;
-        let bip_account_path_string = format!("m/44'/309'/{}'", bip_account_id);
-        let normal_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 0);
-        let change_path_string = format!("m/44'/309'/{}'/{}", bip_account_id, 1);
-        let bip_account_path = DerivationPath::from_str(bip_account_path_string.as_str()).unwrap();
-        let normal_path = DerivationPath::from_str(normal_path_string.as_str()).unwrap();
-        let change_path = DerivationPath::from_str(change_path_string.as_str()).unwrap();
+        let bip_account_index = 0;
+        let command = apdu::do_account_import(bip_account_index);
+        let response = ledger_app.ledger_app.exchange(command)?;
 
-        let pub_key_normal = ledger_app.extended_privkey(bip_account_path.as_ref())?.public_key()?;
-        let ext_pub_key_normal = ledger_app.extended_pubkey(normal_path.as_ref())?;
-        let ext_pub_key_change = ledger_app.extended_pubkey(change_path.as_ref())?;
+        debug!(
+            "Nervos CBK Ledger app extended pub key raw public key {:02x?}",
+            &response
+        );
+        let mut resp = &response.data[..];
+
+        let root_public_key = {
+            let len = parse::split_first(&mut resp)? as usize;
+            let raw_public_key = parse::split_off_at(&mut resp, len)?;
+            PublicKey::from_slice(&raw_public_key)?
+        };
+        let ext_pub_key_normal = {
+            let len1 = parse::split_first(&mut resp)? as usize;
+            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
+            let len2 = parse::split_first(&mut resp)? as usize;
+            let chain_code = parse::split_off_at(&mut resp, len2)?;
+            let public_key = PublicKey::from_slice(&raw_public_key)?;
+            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
+            to_ext_pub_key(public_key, chain_code, false)
+        };
+        let ext_pub_key_change = {
+            let len1 = parse::split_first(&mut resp)? as usize;
+            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
+            let len2 = parse::split_first(&mut resp)? as usize;
+            let chain_code = parse::split_off_at(&mut resp, len2)?;
+            let public_key = PublicKey::from_slice(&raw_public_key)?;
+            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
+            to_ext_pub_key(public_key, chain_code, true)
+        };
+        parse::assert_nothing_left(resp)?;
 
         let LedgerId (ledger_id) = account_id;
         let filepath = self.data_dir.join(ledger_id.to_string());
-        let lock_arg = ckb_sdk::wallet::hash_public_key(&pub_key_normal);
-        let ext_pub_key_normal = serde_json::json!({
-            "address" : ext_pub_key_normal.public_key.to_string(),
-            "chain-code" : (|ChainCode (bytes)| bytes) (ext_pub_key_normal.chain_code),
-        });
-        let ext_pub_key_change = serde_json::json!({
-            "address" : ext_pub_key_change.public_key.to_string(),
-            "chain-code" : (|ChainCode (bytes)| bytes) (ext_pub_key_change.chain_code),
-        });
-        let json_value = serde_json::json!({
-            "ledger-id" : ledger_id,
-            "lock_arg" : lock_arg,
-            "extended_public_key_normal": ext_pub_key_normal,
-            "extended_public_key_change": ext_pub_key_change,
-        });
+        let lock_arg = ckb_sdk::wallet::hash_public_key(&root_public_key);
+        let ledger_account = LedgerImportedAccount {
+            ledger_id: account_id.clone(),
+            lock_arg: lock_arg.clone(),
+            ext_pub_key_normal,
+            ext_pub_key_change,
+        };
+        let json_value = ledger_imported_account_to_json(&ledger_account)?;
+        self.imported_accounts.insert(lock_arg.clone(), ledger_account);
         fs::File::create(&filepath)
             .and_then(|mut file| file.write_all(json_value.to_string().as_bytes()))
             .map_err(|err| LedgerKeyStoreError::KeyStoreIOError{err})?;
