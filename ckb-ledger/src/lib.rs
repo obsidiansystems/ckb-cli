@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::fs;
-use std::io::prelude::{Write};
+use std::io::prelude::{Write, Read};
 use std::convert::TryInto;
 use std::str::FromStr;
 
@@ -77,6 +77,24 @@ impl LedgerKeyStore {
             self.discovered_devices
                 .insert(ledger_app.id.clone(), ledger_app);
         }
+        self.refresh_dir()?;
+        Ok(())
+    }
+
+    fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
+        let mut imported_accounts = HashMap::default();
+        for entry in fs::read_dir(&self.data_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let mut file = fs::File::open(&path)?;
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)?;
+                let acc = ledger_imported_account_from_json(&contents)?;
+                imported_accounts.insert(acc.lock_arg.clone(), acc);
+            }
+        }
+        self.imported_accounts = imported_accounts;
         Ok(())
     }
 
