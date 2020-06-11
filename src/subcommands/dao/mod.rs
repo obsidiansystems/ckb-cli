@@ -184,7 +184,7 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                 Either::Right(AccountId::LedgerId(ref ledger_id)) => {
                     let master = dao
                         .ledger_key_store
-                        .borrow_account(&ledger_id)
+                        .borrow_account(&Either::Right (ledger_id.clone()))
                         .map_err(|e| e.to_string())?
                         .clone();
                     let derived_priv = master

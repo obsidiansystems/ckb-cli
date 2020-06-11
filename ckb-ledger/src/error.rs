@@ -1,6 +1,7 @@
 use ::std::fmt::Debug;
 
 use ckb_sdk::wallet::{Bip32Error, DerivationPath};
+use ckb_types::H160;
 
 use failure::Fail;
 
@@ -14,6 +15,8 @@ pub enum Error {
     RawLedgerError(RawLedgerError),
     #[fail(display = "Ledger with id {:?} not found", _0)]
     LedgerNotFound { id: LedgerId },
+    #[fail(display = "Ledger account for lock_arg: {:?} not found", _0)]
+    LedgerAccountNotFound ( H160 ),
     #[fail(display = "Error in client-side BIP-32 calculations: {}", _0)]
     Bip32Error(Bip32Error),
     #[fail(display = "Error in secp256k1 marshalling: {}", _0)]
@@ -33,6 +36,10 @@ pub enum Error {
         _0
     )]
     InvalidDerivationPath { path: DerivationPath },
+    #[fail(display = "IO Error while doing Ledger KeyStore operation : {}", _0)]
+    KeyStoreIOError (std::io::Error),
+    #[fail(display = "Error while doing Json decoding : {}", _0)]
+    JsonDecodeError (serde_json::error::Error),
 }
 
 impl From<RawLedgerError> for Error {
@@ -50,5 +57,17 @@ impl From<Bip32Error> for Error {
 impl From<secp256k1::Error> for Error {
     fn from(err: secp256k1::Error) -> Self {
         Error::Secp256k1Error(err)
+    }
+}
+
+impl From<serde_json::error::Error> for Error {
+    fn from(err: serde_json::error::Error) -> Self {
+        Error::JsonDecodeError(err)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::KeyStoreIOError(err)
     }
 }

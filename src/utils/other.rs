@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::ArgMatches;
 use colored::Colorize;
-use either::Either;
+use either::{Either, Either::Right};
 use rpassword::prompt_password_stdout;
 
 use ckb_hash::blake2b_256;
@@ -426,7 +426,7 @@ pub fn make_address_payload_and_master_key_cap<'a>(
             None,
             Some(Box::new(KeyAdapter(
                 ledger_key_store
-                    .borrow_account(ledger_id)
+                    .borrow_account(&Right (ledger_id.clone()))
                     .map_err(|e| e.to_string())?
                     .clone(),
             ))),
