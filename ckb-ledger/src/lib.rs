@@ -12,9 +12,11 @@ use byteorder::{BigEndian, WriteBytesExt};
 use log::debug;
 use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::RecoveryId, Signature};
 
+use ckb_crypto::secp::SECP256K1;
+use ckb_hash::blake2b_256;
 use ckb_sdk::wallet::{
     is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey,
-    ChildNumber, DerivationPath, ScryptType, ExtendedPubKey, ChainCode, Fingerprint,
+    ChildNumber, DerivationPath, DerivedKeySet, ScryptType, ExtendedPubKey, ChainCode, Fingerprint, KeyChain,
 };
 use ckb_sdk::SignEntireHelper;
 use ckb_types::{H160, H256};
@@ -238,6 +240,41 @@ pub struct LedgerMasterCap {
     account: LedgerImportedAccount,
     // TODO no Arc once we have "generic associated types" and can just borrow the device.
     ledger_app: Option <Arc<RawLedgerApp>>,
+
+}
+
+impl LedgerMasterCap {
+    pub fn derived_key_set_by_index(
+        &self,
+        external_start: u32,
+        external_length: u32,
+        change_start: u32,
+        change_length: u32,
+    ) -> DerivedKeySet {
+        let get_pairs = |chain, start, length| {
+            let epk = match chain {
+                KeyChain::External => self.account.ext_pub_key_external,
+                KeyChain::Change => self.account.ext_pub_key_change,
+            };
+
+            (0..length)
+                .map(|i| {
+                    let path_string = format!("m/44'/309'/0'/{}/{}", chain as u8, i + start);
+                    let path = DerivationPath::from_str(path_string.as_str()).unwrap();
+                    let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i + start }).unwrap();
+                    let pubkey = extended_pubkey.public_key;
+                    let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+                        .expect("Generate hash(H160) from pubkey failed");
+                    (path, hash)
+                })
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        DerivedKeySet {
+            external: get_pairs(KeyChain::External, external_start, external_length),
+            change: get_pairs(KeyChain::Change, change_start, change_length),
+        }
+    }
 }
 
 const WRITE_ERR_MSG: &'static str = "IO error not possible when writing to Vec last I checked";

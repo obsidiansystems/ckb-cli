@@ -371,18 +371,27 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                 let change_length: u32 =
                     FromStrParser::<u32>::default().from_matches(m, "change-length")?;
 
-                let password = read_password(false, None)?;
-                let key_set = self
-                    .key_store
-                    .derived_key_set_by_index_with_password(
-                        &lock_arg,
-                        password.as_bytes(),
-                        from_receiving_index,
-                        receiving_length,
-                        from_change_index,
-                        change_length,
-                    )
-                    .map_err(|err| err.to_string())?;
+                let key_set = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
+                    account.derived_key_set_by_index(
+                            from_receiving_index,
+                            receiving_length,
+                            from_change_index,
+                            change_length,
+                        )
+                } else {
+                    let password = read_password(false, None)?;
+                    self
+                        .key_store
+                        .derived_key_set_by_index_with_password(
+                            &lock_arg,
+                            password.as_bytes(),
+                            from_receiving_index,
+                            receiving_length,
+                            from_change_index,
+                            change_length,
+                        )
+                        .map_err(|err| err.to_string())?
+                };
                 let get_addresses = |set: &[(DerivationPath, H160)]| {
                     set.iter()
                         .map(|(path, hash160)| {
