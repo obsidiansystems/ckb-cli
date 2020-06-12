@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches};
 use either::Either;
 use std::collections::HashSet;
 
@@ -94,32 +94,32 @@ impl<'a> CliSubCommand for DAOSubCommand<'a> {
                 });
                 Ok(resp.render(format, color))
             }
-            _ => Err(matches.usage().to_owned()),
+            _ => Err(Self::subcommand().generate_usage()),
         }
     }
 }
 
 impl<'a> DAOSubCommand<'a> {
-    pub fn subcommand() -> App<'static, 'static> {
-        SubCommand::with_name("dao")
+    pub fn subcommand() -> App<'static> {
+        App::new("dao")
             .about("Deposit / prepare / withdraw / query NervosDAO balance (with local index) / key utils")
             .subcommands(vec![
-                SubCommand::with_name("deposit")
+                App::new("deposit")
                     .about("Deposit capacity into NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::capacity().required(true)),
-                SubCommand::with_name("prepare")
+                App::new("prepare")
                     .about("Prepare specified cells from NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::out_point().required(true).multiple(true)),
-                SubCommand::with_name("withdraw")
+                App::new("withdraw")
                     .about("Withdraw specified cells from NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::out_point().required(true).multiple(true)),
-                SubCommand::with_name("query-deposited-cells")
+                App::new("query-deposited-cells")
                     .about("Query NervosDAO deposited capacity by lock script hash or address")
                     .args(&QueryArgs::args()),
-                SubCommand::with_name("query-prepared-cells")
+                App::new("query-prepared-cells")
                     .about("Query NervosDAO prepared capacity by lock script hash or address")
                     .args(&QueryArgs::args())
             ])
@@ -151,7 +151,7 @@ impl QueryArgs {
         Ok(Self { lock_hash })
     }
 
-    fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    fn args<'a>() -> Vec<Arg<'a>> {
         vec![arg::lock_hash(), arg::address()]
     }
 }
@@ -162,6 +162,30 @@ impl TransactArgs {
         let path = match account {
             Either::Left(_) => DerivationPath::empty(),
             _ => DerivationPathParser.from_matches(m, "path")?,
+// =======MERGE
+//         let privkey: Option<PrivkeyWrapper> =
+//             PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
+//         let address = if let Some(privkey) = privkey.as_ref() {
+//             let pubkey = secp256k1::PublicKey::from_secret_key(&SECP256K1, privkey);
+//             let payload = AddressPayload::from_pubkey(&pubkey);
+//             Address::new(network_type, payload)
+//         } else {
+//             let account: Option<H160> = FixedHashParser::<H160>::default()
+//                 .from_matches_opt(m, "from-account", false)
+//                 .or_else(|err| {
+//                     let result: Result<Option<Address>, String> = AddressParser::new_sighash()
+//                         .set_network(network_type)
+//                         .from_matches_opt(m, "from-account", false);
+//                     result
+//                         .map(|address_opt| {
+//                             address_opt
+//                                 .map(|address| H160::from_slice(&address.payload().args()).unwrap())
+//                         })
+//                         .map_err(|_| format!("Invalid value for '--from-account': {}", err))
+//                 })?;
+//             let payload = AddressPayload::from_pubkey_hash(account.unwrap());
+//             Address::new(network_type, payload)
+// >>>>>>> nervos-upstream/develop
         };
         let tx_fee: u64 = CapacityParser.from_matches(m, "tx-fee")?;
         Ok(Self {
@@ -172,13 +196,13 @@ impl TransactArgs {
         })
     }
 
-    fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    fn args<'a>() -> Vec<Arg<'a>> {
         vec![
-            arg::privkey_path().required_unless(arg::from_account().b.name),
+            arg::privkey_path().required_unless(arg::from_account().get_name()),
             arg::from_account()
-                .required_unless(arg::privkey_path().b.name)
-                .conflicts_with(arg::privkey_path().b.name),
-            arg::derivation_path().conflicts_with(arg::privkey_path().b.name),
+                .required_unless(arg::privkey_path().get_name())
+                .conflicts_with(arg::privkey_path().get_name()),
+            arg::derivation_path().conflicts_with(arg::privkey_path().get_name()),
             arg::tx_fee().required(true),
         ]
     }

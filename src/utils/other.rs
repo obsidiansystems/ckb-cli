@@ -159,6 +159,22 @@ pub fn get_genesis_info(
     }
 }
 
+// pub fn get_live_cell_with_cache(
+//     cache: &mut HashMap<(OutPoint, bool), (CellOutput, Bytes)>,
+//     client: &mut HttpRpcClient,
+//     out_point: OutPoint,
+//     with_data: bool,
+// ) -> Result<(CellOutput, Bytes), String> {
+//     if let Some(output) = cache.get(&(out_point.clone(), with_data)).cloned() {
+//         Ok(output)
+//     } else {
+//         let output = get_live_cell(client, out_point.clone(), with_data)?;
+//         cache.insert((out_point, with_data), output.clone());
+//         Ok(output)
+//     }
+// }
+
+
 pub fn get_live_cell_with_cache(
     cache: &mut HashMap<(OutPoint, bool), ((CellOutput, Transaction), Bytes)>,
     client: &mut HttpRpcClient,
@@ -394,7 +410,7 @@ pub fn privkey_or_from_account(
 pub fn make_address_payload_and_master_key_cap<'a>(
     from_account: &'a Either<PrivkeyWrapper, AccountId>,
     key_store: &'a mut KeyStore,
-    ledger_key_store: &'a mut LedgerKeyStore,
+    ledger_key_store: Option<&'a mut LedgerKeyStore>,
 ) -> Result<
     (
         Option<AddressPayload>,
@@ -422,14 +438,22 @@ pub fn make_address_payload_and_master_key_cap<'a>(
                 ))),
             )
         }
-        Either::Right(AccountId::LedgerId(ref ledger_id)) => (
-            None,
-            Some(Box::new(KeyAdapter(
-                ledger_key_store
-                    .borrow_account(ledger_id)
-                    .map_err(|e| e.to_string())?
-                    .clone(),
+        Either::Right(AccountId::LedgerId(ref ledger_id)) => if let Some(lkey_store) = ledger_key_store { 
+            (
+                None,
+                Some(Box::new(KeyAdapter(
+                    lkey_store
+                        .borrow_account(ledger_id)
+                        .map_err(|e| e.to_string())?
+                        .clone(),
             ))),
-        ),
+        )} else { (None, None) }
     })
+}
+
+pub fn get_arg_value<'a>(matches: &'a ArgMatches, name: &str) -> Result<String, String> {
+    matches
+        .value_of(name)
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("<{}> is required", name))
 }

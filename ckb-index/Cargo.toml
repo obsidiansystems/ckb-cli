@@ -1,6 +1,6 @@
 [package]
 name = "ckb-index"
-version = "0.27.1"
+version = "0.33.0"
 authors = ["Linfeng Qian <thewawar@gmail.com>", "Nervos Core Dev <dev@nervos.org>"]
 edition = "2018"
 license = "MIT"
@@ -13,7 +13,4 @@ log = "0.4.6"
 failure = "0.1.5"
 ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
 ckb-sdk = { path = "../ckb-sdk" }
-
-[dependencies.rocksdb]
-git = "https://github.com/nervosnetwork/rust-rocksdb"
-rev = "14d2991"
+rocksdb = { package = "ckb-rocksdb", version = "=0.13.0", features = ["snappy"] }

@@ -37,7 +37,7 @@ pub trait ArgParser {
 
     fn parse(&self, input: &str) -> Result<Self::Value, Self::Error>;
 
-    fn validate(&self, input: String) -> Result<(), Self::Error> {
+    fn validate(&self, input: &str) -> Result<(), Self::Error> {
         self.parse(&input).map(|_| ())
     }
 

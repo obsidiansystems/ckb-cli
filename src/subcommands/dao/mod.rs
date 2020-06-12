@@ -11,7 +11,7 @@ use crate::utils::index::IndexController;
 use crate::utils::key_adapter::KeyAdapter;
 use crate::utils::other::{
     get_live_cell, get_max_mature_number, get_network_type, get_privkey_signer, is_mature,
-    read_password, serialize_signature_bytes,
+    read_password, serialize_signature_bytes, sync_to_tip,
 };
 
 use ckb_crypto::secp::SECP256K1;
@@ -44,6 +44,8 @@ pub struct DAOSubCommand<'a> {
     genesis_info: GenesisInfo,
     index_dir: PathBuf,
     index_controller: IndexController,
+    transact_args: Option<TransactArgs>,
+    wait_for_sync: bool,
 }
 
 impl<'a> DAOSubCommand<'a> {
@@ -54,6 +56,7 @@ impl<'a> DAOSubCommand<'a> {
         genesis_info: GenesisInfo,
         index_dir: PathBuf,
         index_controller: IndexController,
+        wait_for_sync: bool,
     ) -> Self {
         Self {
             rpc_client,
@@ -62,6 +65,8 @@ impl<'a> DAOSubCommand<'a> {
             genesis_info,
             index_dir,
             index_controller,
+            transact_args: None,
+            wait_for_sync,
         }
     }
 
@@ -116,6 +121,9 @@ impl<'a> DAOSubCommand<'a> {
     where
         F: FnOnce(IndexDatabase, &mut HttpRpcClient) -> T,
     {
+        if self.wait_for_sync {
+            sync_to_tip(&self.index_controller)?;
+        }
         let network_type = get_network_type(self.rpc_client)?;
         let genesis_info = self.genesis_info.clone();
         let genesis_hash: H256 = genesis_info.header().hash().unpack();
@@ -314,7 +322,7 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
         let lock_script = Script::new_builder()
             .hash_type(ScriptHashType::Type.into())
             .code_hash(sighash_type_hash.clone())
-            .args(Bytes::from(sighash_args.as_bytes()).pack())
+            .args(Bytes::from(sighash_args.as_bytes().to_vec()).pack())
             .build();
         let outputs = transaction
             .outputs()
@@ -449,6 +457,65 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
             .build())
     }
 }
+// =======MERGE
+
+//     fn check_db_ready(&mut self) -> Result<(), String> {
+//         self.with_db(|_, _| ())
+//     }
+
+//     fn with_db<F, T>(&mut self, func: F) -> Result<T, String>
+//     where
+//         F: FnOnce(IndexDatabase, &mut HttpRpcClient) -> T,
+//     {
+//         if self.wait_for_sync {
+//             sync_to_tip(&self.index_controller)?;
+//         }
+//         let network_type = get_network_type(self.rpc_client)?;
+//         let genesis_info = self.genesis_info.clone();
+//         let genesis_hash: H256 = genesis_info.header().hash().unpack();
+//         with_index_db(&self.index_dir.clone(), genesis_hash, |backend, cf| {
+//             let db = IndexDatabase::from_db(backend, cf, network_type, genesis_info, false)?;
+//             Ok(func(db, self.rpc_client()))
+//         })
+//         .map_err(|_err| {
+//             format!(
+//                 "Index database may not ready, sync process: {}",
+//                 self.index_controller.state().read().to_string()
+//             )
+//         })
+//     }
+
+//     fn transact_args(&self) -> &TransactArgs {
+//         self.transact_args.as_ref().expect("exist")
+//     }
+
+//     fn dao_type_hash(&self) -> &Byte32 {
+//         self.genesis_info.dao_type_hash()
+//     }
+
+//     pub(crate) fn rpc_client(&mut self) -> &mut HttpRpcClient {
+//         &mut self.rpc_client
+//     }
+// }
+
+// // TODO remove the duplicated function later
+// fn get_keystore_signer(key_store: KeyStore, account: H160, password: String) -> SignerFn {
+//     Box::new(move |lock_args: &HashSet<H160>, message: &H256| {
+//         if lock_args.contains(&account) {
+//             if message == &h256!("0x0") {
+//                 Ok(Some([0u8; 65]))
+//             } else {
+//                 key_store
+//                     .sign_recoverable_with_password(&account, &[], message, password.as_bytes())
+//                     .map(|signature| Some(serialize_signature(&signature)))
+//                     .map_err(|err| err.to_string())
+//             }
+//         } else {
+//             Ok(None)
+//         }
+//     })
+// >>>>>>> nervos-upstream/develop
+// }
 
 fn take_by_out_points(
     cells: Vec<LiveCellInfo>,

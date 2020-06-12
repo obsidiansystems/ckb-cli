@@ -33,7 +33,7 @@ pub struct InteractiveEnv {
     config_file: PathBuf,
     history_file: PathBuf,
     index_dir: PathBuf,
-    parser: clap::App<'static, 'static>,
+    parser: clap::App<'static>,
     key_store: KeyStore,
     ledger_key_store: LedgerKeyStore,
     rpc_client: HttpRpcClient,
@@ -71,7 +71,7 @@ impl InteractiveEnv {
 
         let parser = crate::build_interactive();
         let rpc_client = HttpRpcClient::new(config.get_url().to_string());
-        let raw_rpc_client = RawHttpRpcClient::from_uri(config.get_url());
+        let raw_rpc_client = RawHttpRpcClient::new(config.get_url());
         let key_store = get_key_store(&ckb_cli_dir)?;
         let ledger_key_store = get_ledger_key_store(&ckb_cli_dir)?;
         Ok(InteractiveEnv {
@@ -228,7 +228,8 @@ impl InteractiveEnv {
         let format = self.config.output_format();
         let color = ColorWhen::new(self.config.color()).color();
         let debug = self.config.debug();
-        match self.parser.clone().get_matches_from_safe(args) {
+        let wait_for_sync = !self.config.no_sync();
+        match self.parser.clone().try_get_matches_from(args) {
             Ok(matches) => match matches.subcommand() {
                 ("config", Some(m)) => {
                     m.value_of("url").and_then(|url| {
@@ -236,7 +237,7 @@ impl InteractiveEnv {
                         Request::call(index_sender, IndexRequest::UpdateUrl(url.to_string()));
                         self.config.set_url(url.to_string());
                         self.rpc_client = HttpRpcClient::new(self.config.get_url().to_string());
-                        self.raw_rpc_client = RawHttpRpcClient::from_uri(self.config.get_url());
+                        self.raw_rpc_client = RawHttpRpcClient::new(self.config.get_url());
                         self.config
                             .set_network(get_network_type(&mut self.rpc_client).ok());
                         self.genesis_info = None;
@@ -255,6 +256,9 @@ impl InteractiveEnv {
                     if m.is_present("debug") {
                         self.config.switch_debug();
                     }
+                    if m.is_present("no-sync") {
+                        self.config.switch_no_sync();
+                    }
 
                     if m.is_present("edit_style") {
                         self.config.switch_edit_style();
@@ -271,6 +275,7 @@ impl InteractiveEnv {
                         "url": self.config.get_url().to_string(),
                         "color": self.config.color(),
                         "debug": self.config.debug(),
+                        "no-sync": self.config.no_sync(),
                         "output_format": self.config.output_format().to_string(),
                         "completion_style": self.config.completion_style(),
                         "edit_style": self.config.edit_style(),
@@ -349,10 +354,11 @@ impl InteractiveEnv {
                     let output = WalletSubCommand::new(
                         &mut self.rpc_client,
                         &mut self.key_store,
-                        &mut self.ledger_key_store,
+                        Some (&mut self.ledger_key_store),
                         Some(genesis_info),
                         self.index_dir.clone(),
                         self.index_controller.clone(),
+                        wait_for_sync,
                     )
                     .process(&sub_matches, format, color, debug)?;
                     println!("{}", output);
@@ -367,6 +373,7 @@ impl InteractiveEnv {
                         genesis_info,
                         self.index_dir.clone(),
                         self.index_controller.clone(),
+                        wait_for_sync,
                     )
                     .process(&sub_matches, format, color, debug)?;
                     println!("{}", output);

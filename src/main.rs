@@ -10,17 +10,17 @@ use ckb_build_info::Version;
 use ckb_sdk::{rpc::RawHttpRpcClient, HttpRpcClient};
 use ckb_util::RwLock;
 use clap::crate_version;
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{App, AppSettings, Arg};
 #[cfg(unix)]
 use subcommands::TuiSubCommand;
 
 use crate::utils::other::get_genesis_info;
 use interactive::InteractiveEnv;
 use subcommands::{
-    start_index_thread, AccountSubCommand, CliSubCommand, DAOSubCommand, MockTxSubCommand,
-    MoleculeSubCommand, RpcSubCommand, TxSubCommand, UtilSubCommand, WalletSubCommand,
+    start_index_thread, AccountSubCommand, ApiServerSubCommand, CliSubCommand, DAOSubCommand,
+    MockTxSubCommand, MoleculeSubCommand, RpcSubCommand, TxSubCommand, UtilSubCommand,
+    WalletSubCommand,
 };
-use utils::other::sync_to_tip;
 use utils::{
     arg_parser::{ArgParser, UrlParser},
     config::GlobalConfig,
@@ -76,6 +76,7 @@ fn main() -> Result<(), io::Error> {
             }
         }
         config.set_debug(configs["debug"].as_bool().unwrap_or(false));
+        config.set_no_sync(configs["no-sync"].as_bool().unwrap_or(false));
         config.set_color(ansi_support && configs["color"].as_bool().unwrap_or(true));
         output_format =
             OutputFormat::from_str(&configs["output_format"].as_str().unwrap_or("yaml"))
@@ -88,34 +89,20 @@ fn main() -> Result<(), io::Error> {
     let api_uri = config.get_url().to_string();
     let index_controller = start_index_thread(api_uri.as_str(), index_dir.clone(), index_state);
     let mut rpc_client = HttpRpcClient::new(api_uri.clone());
-    let mut raw_rpc_client = RawHttpRpcClient::from_uri(api_uri.as_str());
+    let mut raw_rpc_client = RawHttpRpcClient::new(api_uri.as_str());
     check_alerts(&mut rpc_client);
     config.set_network(get_network_type(&mut rpc_client).ok());
 
     let color = ColorWhen::new(!matches.is_present("no-color")).color();
     let debug = matches.is_present("debug");
-
-    // When flag `--wait-for-sync` given, we have to ensure that the index-store synchronizes
-    // to the tip before executing the command.
-    let wait_for_sync = matches.is_present("wait-for-sync");
-    if wait_for_sync {
-        if let Err(err) = sync_to_tip(&index_controller) {
-            eprintln!("Synchronize error: {}", err);
-            process::exit(1);
-        }
-    }
+    let wait_for_sync = !matches.is_present("no-sync");
 
     if let Some(format) = matches.value_of("output-format") {
         output_format = OutputFormat::from_str(format).unwrap();
     }
     let result = match matches.subcommand() {
         #[cfg(unix)]
-        ("tui", _) => TuiSubCommand::new(
-            api_uri.to_string(),
-            index_dir.clone(),
-            index_controller.clone(),
-        )
-        .start(),
+        ("tui", _) => TuiSubCommand::new(api_uri, index_dir, index_controller.clone()).start(),
         ("rpc", Some(sub_matches)) => RpcSubCommand::new(&mut rpc_client, &mut raw_rpc_client)
             .process(&sub_matches, output_format, color, debug),
         ("account", Some(sub_matches)) => {
@@ -150,6 +137,16 @@ fn main() -> Result<(), io::Error> {
                 debug,
             )
         }),
+        ("server", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
+            ApiServerSubCommand::new(
+                &mut rpc_client,
+                &mut key_store,
+                None,
+                index_dir.clone(),
+                index_controller.clone(),
+            )
+            .process(&sub_matches, output_format, color, debug)
+        }),
         ("molecule", Some(sub_matches)) => {
             MoleculeSubCommand::new().process(&sub_matches, output_format, color, debug)
         }
@@ -158,10 +155,11 @@ fn main() -> Result<(), io::Error> {
                 WalletSubCommand::new(
                     &mut rpc_client,
                     &mut key_store,
-                    &mut ledger_key_store,
+                    Some (&mut ledger_key_store),
                     None,
                     index_dir.clone(),
                     index_controller.clone(),
+                    wait_for_sync,
                 )
                 .process(&sub_matches, output_format, color, debug)
             })
@@ -177,6 +175,7 @@ fn main() -> Result<(), io::Error> {
                             genesis_info,
                             index_dir.clone(),
                             index_controller.clone(),
+                            wait_for_sync,
                         )
                         .process(&sub_matches, output_format, color, debug)
                     },
@@ -211,7 +210,7 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn get_version() -> Version {
+pub fn get_version() -> Version {
     let major = env!("CARGO_PKG_VERSION_MAJOR")
         .parse::<u8>()
         .expect("CARGO_PKG_VERSION_MAJOR parse success");
@@ -245,7 +244,7 @@ fn get_version() -> Version {
     }
 }
 
-pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, 'a> {
+pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a> {
     let app = App::new("ckb-cli")
         .version(version_short)
         .long_version(version_long)
@@ -255,6 +254,7 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
         .subcommand(AccountSubCommand::subcommand("account"))
         .subcommand(MockTxSubCommand::subcommand("mock-tx"))
         .subcommand(TxSubCommand::subcommand("tx"))
+        .subcommand(ApiServerSubCommand::subcommand("server"))
         .subcommand(UtilSubCommand::subcommand("util"))
         .subcommand(MoleculeSubCommand::subcommand("molecule"))
         .subcommand(WalletSubCommand::subcommand())
@@ -264,7 +264,7 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
                 .long("url")
                 .takes_value(true)
                 .validator(|input| UrlParser.validate(input))
-                .help("RPC API server url"),
+                .about("RPC API server url"),
         )
         .arg(
             Arg::with_name("output-format")
@@ -273,36 +273,44 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
                 .possible_values(&["yaml", "json"])
                 .default_value("yaml")
                 .global(true)
-                .help("Select output format"),
+                .about("Select output format"),
         )
         .arg(
             Arg::with_name("no-color")
                 .long("no-color")
                 .global(true)
-                .help("Do not highlight(color) output json"),
+                .about("Do not highlight(color) output json"),
         )
         .arg(
             Arg::with_name("debug")
                 .long("debug")
                 .global(true)
-                .help("Display request parameters"),
+                .about("Display request parameters"),
         )
         .arg(
             Arg::with_name("wait-for-sync")
                 .long("wait-for-sync")
+                .conflicts_with("no-sync")
                 .global(true)
-                .help(
+                .about(
                     "Ensure the index-store synchronizes completely before command being executed",
                 ),
+        )
+        .arg(
+            Arg::with_name("no-sync")
+                .long("no-sync")
+                .conflicts_with("wait-for-sync")
+                .global(true)
+                .about("Don't wait index database sync to tip"),
         );
 
     #[cfg(unix)]
-    let app = app.subcommand(SubCommand::with_name("tui").about("Enter TUI mode"));
+    let app = app.subcommand(App::new("tui").about("Enter TUI mode"));
 
     app
 }
 
-pub fn build_interactive() -> App<'static, 'static> {
+pub fn build_interactive() -> App<'static> {
     App::new("interactive")
         .version(crate_version!())
         .global_setting(AppSettings::NoBinaryName)
@@ -310,24 +318,29 @@ pub fn build_interactive() -> App<'static, 'static> {
         .global_setting(AppSettings::DeriveDisplayOrder)
         .global_setting(AppSettings::DisableVersion)
         .subcommand(
-            SubCommand::with_name("config")
+            App::new("config")
                 .about("Config environment")
                 .arg(
                     Arg::with_name("url")
                         .long("url")
                         .validator(|input| UrlParser.validate(input))
                         .takes_value(true)
-                        .help("Config RPC API url"),
+                        .about("Config RPC API url"),
                 )
                 .arg(
                     Arg::with_name("color")
                         .long("color")
-                        .help("Switch color for rpc interface"),
+                        .about("Switch color for rpc interface"),
                 )
                 .arg(
                     Arg::with_name("debug")
                         .long("debug")
-                        .help("Switch debug mode"),
+                        .about("Switch debug mode"),
+                )
+                .arg(
+                    Arg::with_name("no-sync")
+                        .long("no-sync")
+                        .about("Switch whether wait index database sync to tip"),
                 )
                 .arg(
                     Arg::with_name("output-format")
@@ -335,22 +348,22 @@ pub fn build_interactive() -> App<'static, 'static> {
                         .takes_value(true)
                         .possible_values(&["yaml", "json"])
                         .default_value("yaml")
-                        .help("Select output format"),
+                        .about("Select output format"),
                 )
                 .arg(
                     Arg::with_name("completion_style")
                         .long("completion_style")
-                        .help("Switch completion style"),
+                        .about("Switch completion style"),
                 )
                 .arg(
                     Arg::with_name("edit_style")
                         .long("edit_style")
-                        .help("Switch edit style"),
+                        .about("Switch edit style"),
                 ),
         )
-        .subcommand(SubCommand::with_name("info").about("Display global variables"))
+        .subcommand(App::new("info").about("Display global variables"))
         .subcommand(
-            SubCommand::with_name("exit")
+            App::new("exit")
                 .visible_alias("quit")
                 .about("Exit the interactive interface"),
         )
