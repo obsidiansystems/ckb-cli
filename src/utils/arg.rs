@@ -1,6 +1,6 @@
 use crate::utils::arg_parser::{
-    AccountIdParser, AddressParser, ArgParser, CapacityParser, FilePathParser, FixedHashParser,
-    FromAccountParser, FromStrParser, HexParser, OutPointParser, PrivkeyPathParser,
+    AddressParser, ArgParser, CapacityParser, FilePathParser, FixedHashParser,
+    FromStrParser, HexParser, OutPointParser, PrivkeyPathParser,
     PubkeyHexParser,
 };
 use ckb_sdk::wallet::DerivationPath;
@@ -89,36 +89,21 @@ pub fn lock_arg<'a, 'b>() -> Arg<'a, 'b> {
         .help("Lock argument (account identifier, blake2b(pubkey)[0..20])")
 }
 
-pub fn account_id<'a, 'b>() -> Arg<'a, 'b> {
-    Arg::with_name("account-id")
-        .long("account-id")
-        .takes_value(true)
-        .validator(|input| AccountIdParser::default().validate(input))
-        .help("The account from which to extend public/private key pairs")
-        .long_help(concat!(
-            "The account identifier is one of:\n",
-            "\n",
-            "- software key lock argument: blake2b(pubkey)[0..20]\n",
-            "\n",
-            "- hardware wallet: opaque identifie\nr",
-        ))
-}
-
 pub fn from_account<'a, 'b>() -> Arg<'a, 'b> {
     Arg::with_name("from-account")
         .long("from-account")
         .takes_value(true)
-        .validator(|input| FromAccountParser.validate(input))
-        .help("transfer from this account")
-        .long_help(concat!(
-            "The account identifier is one of:\n",
-            "\n",
-            " - software key lock argument: blake2b(pubkey)[0..20]\n",
-            "\n",
-            " - hardware wallet: opaque identifier\n",
-            "\n",
-            " - sighash address for software key\n",
-        ))
+        .validator(|input| {
+            FixedHashParser::<H160>::default()
+                .validate(input.clone())
+                .or_else(|err| {
+                    AddressParser::default()
+                        .validate(input.clone())
+                        .and_then(|()| AddressParser::new_sighash().validate(input))
+                        .map_err(|_| err)
+                })
+        })
+        .help("The account's lock-arg or sighash address (transfer from this account)")
 }
 
 pub fn from_locked_address<'a, 'b>() -> Arg<'a, 'b> {

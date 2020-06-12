@@ -18,7 +18,6 @@ use ckb_sdk::{
 use ckb_types::{packed::OutPoint, prelude::*, H160, H256};
 
 pub use super::privkey_wrapper::PrivkeyWrapper;
-use crate::subcommands::account::AccountId;
 
 pub struct MissingFieldError {
     name: String,
@@ -698,95 +697,6 @@ impl ArgParser for DerivationPathParser {
                 .from_matches_opt(matches, name, false)?
                 .unwrap_or_else(DerivationPath::empty),
         ))
-    }
-}
-
-#[derive(Default)]
-pub struct AccountIdParser(EitherParser<FixedHashParser<H160>, FixedHashParser<H256>>);
-
-impl AccountIdParser {
-    fn render_error((left_error, right_error): (String, String)) -> String {
-        format!("Not a valid account id of any type: not a valid software key because of {}, not a valid ledger key because of {}", left_error, right_error)
-    }
-}
-
-impl From<Either<H160, H256>> for AccountId {
-    fn from(val: Either<H160, H256>) -> Self {
-        match val {
-            Either::Left(x) => AccountId::SoftwareMasterKey(x),
-            Either::Right(x) => AccountId::LedgerId(ckb_ledger::LedgerId(x)),
-        }
-    }
-}
-
-impl ArgParser for AccountIdParser {
-    type Value = AccountId;
-    type Error = String;
-
-    fn parse(&self, input: &str) -> Result<AccountId, String> {
-        self.0
-            .parse(input)
-            .map(From::from)
-            .map_err(Self::render_error)
-    }
-}
-
-#[derive(Default)]
-pub struct FromAccountParser;
-
-impl From<Either<Either<H160, H256>, Either<Address, Address>>> for AccountId {
-    fn from(val: Either<Either<H160, H256>, Either<Address, Address>>) -> Self {
-        use Either::*;
-        let address = match val {
-            Left(either_hashes) => return From::from(either_hashes),
-            Right(Left(address)) => address,
-            Right(Right(address)) => address,
-        };
-        AccountId::SoftwareMasterKey(H160::from_slice(&address.payload().args()).unwrap())
-    }
-}
-
-impl FromAccountParser {
-    fn mk_parser() -> EitherParser<
-        EitherParser<FixedHashParser<H160>, FixedHashParser<H256>>,
-        EitherParser<AddressParser, AddressParser>,
-    > {
-        EitherParser {
-            a: EitherParser::default(),
-            b: EitherParser {
-                a: AddressParser::default(),
-                b: AddressParser::new_sighash(),
-            },
-        }
-    }
-    fn render_error(
-        ((lock_arg_error, wallet_error), (address_default_error, address_sighash_error)): (
-            (String, String),
-            (String, String),
-        ),
-    ) -> String {
-        format!(
-            concat!(
-                "Not a valid account id of any type:\n",
-                "\n",
-                " - not a valid software key lock arg because of {}\n",
-                " - not a valid ledger key because of {}\n",
-                " - not a address (for software key) because of {} or {}\n",
-            ),
-            lock_arg_error, wallet_error, address_default_error, address_sighash_error,
-        )
-    }
-}
-
-impl ArgParser for FromAccountParser {
-    type Value = AccountId;
-    type Error = String;
-
-    fn parse(&self, input: &str) -> Result<Self::Value, Self::Error> {
-        Self::mk_parser()
-            .parse(input)
-            .map(From::from)
-            .map_err(Self::render_error)
     }
 }
 

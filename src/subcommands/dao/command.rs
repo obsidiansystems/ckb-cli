@@ -3,7 +3,6 @@ use either::Either;
 use std::collections::HashSet;
 
 use crate::subcommands::{
-    account::AccountId,
     dao::util::{calculate_dao_maximum_withdraw, send_transaction},
     CliSubCommand, DAOSubCommand,
 };
@@ -21,7 +20,7 @@ use ckb_sdk::{wallet::DerivationPath, NetworkType};
 use ckb_types::{
     packed::{Byte32, Script},
     prelude::*,
-    H256,
+    H160, H256,
 };
 
 impl<'a> CliSubCommand for DAOSubCommand<'a> {
@@ -131,7 +130,7 @@ pub(crate) struct QueryArgs {
 }
 
 pub(crate) struct TransactArgs {
-    pub(crate) account: Either<PrivkeyWrapper, AccountId>,
+    pub(crate) account: Either<PrivkeyWrapper, H160>,
     pub(crate) path: DerivationPath,
     pub(crate) tx_fee: u64,
     pub(crate) network_type: NetworkType,

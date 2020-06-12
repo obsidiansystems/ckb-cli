@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 use self::builder::DAOBuilder;
 use self::command::TransactArgs;
-use crate::subcommands::account::AccountId;
 use crate::utils::index::IndexController;
 use crate::utils::key_adapter::KeyAdapter;
 use crate::utils::other::{
@@ -169,34 +168,30 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                         Box::new(KeyAdapter(from_privkey.clone())),
                     )
                 }
-                Either::Right(AccountId::SoftwareMasterKey(ref hash160)) => {
-                    let password = read_password(false, None)?;
-                    (
-                        AddressPayload::from_pubkey_hash(hash160.clone()),
-                        KeyAdapter(
-                            dao.key_store
-                                .get_key(&hash160, password.as_bytes())
-                                .map_err(|e| e.to_string())?,
+                Either::Right(ref hash160) => {
+                    if let Ok (master) = dao.ledger_key_store.borrow_account(hash160) {
+                        let derived_priv = master
+                            .extended_privkey(transact_args.path.as_ref())
+                            .map_err(|e| e.to_string())?;
+                        let derived_pub = master
+                            .extended_pubkey(transact_args.path.as_ref())
+                            .map_err(|e| e.to_string())?;
+                        (
+                            AddressPayload::from_pubkey(&derived_pub.public_key),
+                            Box::new(KeyAdapter(derived_priv)),
                         )
-                        .extended_privkey(transact_args.path.as_ref())?,
-                    )
-                }
-                Either::Right(AccountId::LedgerId(ref ledger_id)) => {
-                    let master = dao
-                        .ledger_key_store
-                        .borrow_account(&Either::Right (ledger_id.clone()))
-                        .map_err(|e| e.to_string())?
-                        .clone();
-                    let derived_priv = master
-                        .extended_privkey(transact_args.path.as_ref())
-                        .map_err(|e| e.to_string())?;
-                    let derived_pub = master
-                        .extended_pubkey(transact_args.path.as_ref())
-                        .map_err(|e| e.to_string())?;
-                    (
-                        AddressPayload::from_pubkey(&derived_pub.public_key),
-                        Box::new(KeyAdapter(derived_priv)),
-                    )
+                    } else {
+                        let password = read_password(false, None)?;
+                        (
+                            AddressPayload::from_pubkey_hash(hash160.clone()),
+                            KeyAdapter(
+                                dao.key_store
+                                    .get_key(&hash160, password.as_bytes())
+                                    .map_err(|e| e.to_string())?,
+                            )
+                                .extended_privkey(transact_args.path.as_ref())?,
+                        )
+                    }
                 }
             };
         assert_eq!(address_payload.code_hash(), SIGHASH_TYPE_HASH.pack());
@@ -370,10 +365,9 @@ impl<'a, 'b> WithTransactArgs<'a, 'b> {
                 .expect("signer missed")
         };
 
-        let is_ledger = match self.transact_args.account {
+        let is_ledger = match &self.transact_args.account {
             Either::Left(_) => false,
-            Either::Right(AccountId::SoftwareMasterKey(_)) => false,
-            Either::Right(AccountId::LedgerId(_)) => true,
+            Either::Right(lock_arg) => self.dao.ledger_key_store.borrow_account(&lock_arg).is_ok(),
         };
 
         let signature = if is_ledger {

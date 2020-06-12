@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use either::Either;
 pub use index::start_index_thread;
 
-use super::account::AccountId;
 use ckb_types::{
     bytes::Bytes,
     core::{BlockView, Capacity, ScriptHashType, TransactionView},
@@ -36,7 +35,7 @@ use ckb_sdk::{
         DAO_TYPE_HASH, MIN_SECP_CELL_CAPACITY, MULTISIG_TYPE_HASH, ONE_CKB, SIGHASH_TYPE_HASH,
     },
     rpc::Transaction,
-    wallet::{AbstractMasterPrivKey, AbstractPrivKey, DerivationPath, KeyStore},
+    wallet::{AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, DerivationPath, KeyStore},
     Address, AddressPayload, GenesisInfo, HttpRpcClient, HumanCapacity, MultisigConfig,
     NetworkType, SignerClosureHelper, SignerFnTrait, Since, SinceType, TxHelper,
 };
@@ -291,11 +290,8 @@ impl<'a> WalletSubCommand<'a> {
 
         let to_data = get_to_data(m)?;
 
-        let is_ledger = if let Either::Right(account) = from_account.clone() {
-            match account {
-                AccountId::SoftwareMasterKey(_) => false,
-                AccountId::LedgerId(_) => true,
-            }
+        let is_ledger = if let Either::Right(lock_arg) = from_account.clone() {
+            self.ledger_key_store.borrow_account(&lock_arg).is_ok()
         } else {
             false
         };
