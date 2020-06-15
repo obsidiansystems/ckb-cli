@@ -275,29 +275,8 @@ impl LedgerMasterCap {
             change: get_pairs(KeyChain::Change, change_start, change_length),
         }
     }
-}
 
-const WRITE_ERR_MSG: &'static str = "IO error not possible when writing to Vec last I checked";
-
-impl AbstractMasterPrivKey for LedgerMasterCap {
-    type Err = LedgerKeyStoreError;
-
-    type Privkey = LedgerCap;
-
-    fn extended_privkey(&self, path: &[ChildNumber]) -> Result<LedgerCap, Self::Err> {
-        if !is_valid_derivation_path(path.as_ref()) {
-            return Err(LedgerKeyStoreError::InvalidDerivationPath {
-                path: path.as_ref().iter().cloned().collect(),
-            });
-        }
-
-        Ok(LedgerCap {
-            master: self.clone(),
-            path: From::from(path.as_ref()),
-        })
-    }
-
-    fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
+    pub fn get_extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
         if !is_valid_derivation_path(path.as_ref()) {
             return Err(LedgerKeyStoreError::InvalidDerivationPath {
                 path: path.as_ref().iter().cloned().collect(),
@@ -342,6 +321,28 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
             chain_code,
         })
     }
+}
+
+const WRITE_ERR_MSG: &'static str = "IO error not possible when writing to Vec last I checked";
+
+impl AbstractMasterPrivKey for LedgerMasterCap {
+    type Err = LedgerKeyStoreError;
+
+    type Privkey = LedgerCap;
+
+    fn extended_privkey(&self, path: &[ChildNumber]) -> Result<LedgerCap, Self::Err> {
+        if !is_valid_derivation_path(path.as_ref()) {
+            return Err(LedgerKeyStoreError::InvalidDerivationPath {
+                path: path.as_ref().iter().cloned().collect(),
+            });
+        }
+
+        Ok(LedgerCap {
+            master: self.clone(),
+            path: From::from(path.as_ref()),
+        })
+    }
+
 }
 
 /// A ledger device with the Nervos app constrained to a specific derivation path.
