@@ -12,25 +12,19 @@ use ckb_sdk::{
 };
 use ckb_types::{packed::Script, prelude::*, H160, H256};
 use clap::{App, Arg, ArgMatches, SubCommand};
-use either::Either::{Left, Right};
 
 use super::CliSubCommand;
 use crate::utils::{
     arg,
+    arg::lock_arg,
     arg_parser::{
-        AccountIdParser, ArgParser, DerivationPathParser, DurationParser,
+        ArgParser, DerivationPathParser, DurationParser,
         ExtendedPrivkeyPathParser, FilePathParser, FixedHashParser, FromStrParser,
         PrivkeyPathParser, PrivkeyWrapper,
     },
     other::read_password,
     printer::{OutputFormat, Printable},
 };
-
-#[derive(Debug, Clone)]
-pub enum AccountId {
-    SoftwareMasterKey(H160),
-    LedgerId(LedgerId),
-}
 
 pub struct AccountSubCommand<'a> {
     key_store: &'a mut KeyStore,
@@ -143,7 +137,7 @@ impl<'a> AccountSubCommand<'a> {
                     .arg(arg::lock_arg().required(true)),
                 SubCommand::with_name("extended-address")
                     .about("Extended address (see: BIP-44)")
-                    .arg(arg::account_id().required(true))
+                    .arg(lock_arg().required(true))
                     .arg(
                         Arg::with_name("path")
                             .long("path")
@@ -198,28 +192,32 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                         }
                     })
                     .chain(list_accounts_with_source(self.ledger_key_store)?
-                           .map(|(account, source)| {
-                               let v = match account {
-                                   Left (lock_arg) => {
-                                       let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
-                                       let lock_hash: H256 = Script::from(&address_payload)
-                                           .calc_script_hash()
-                                           .unpack();
-                                       serde_json::json!({
-                                           "lock_arg": format!("{:#x}", lock_arg),
-                                           "lock_hash": format!("{:#x}", lock_hash),
-                                           "address": {
-                                               "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                                               "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
-                                           },
-                                           "account_source": source,
-                                       })
+                           .map(|(lock_arg, source)| {
+                               let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
+                               let lock_hash: H256 = Script::from(&address_payload)
+                                   .calc_script_hash()
+                                   .unpack();
+                               let v = serde_json::json!({
+                                   "lock_arg": format!("{:#x}", lock_arg),
+                                   "lock_hash": format!("{:#x}", lock_hash),
+                                   "address": {
+                                       "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
+                                       "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
                                    },
-                                   Right (LedgerId (ledger_id)) => serde_json::json!({
-                                       "ledger_id": ledger_id,
-                                       "account_source": source,
-                                   }),
-                               };
+                                   "account_source": source,
+                               });
+                               match v {
+                                   serde_json::Value::Object(m) => m,
+                                   _ => panic!("We should have written a panic above."),
+                               }
+                           }))
+                    .chain(self.ledger_key_store.discovered_devices()
+                           .map_err(|err| err.to_string())?
+                           .map(|LedgerId (ledger_id)| {
+                               let v = serde_json::json!({
+                                   "ledger_id": ledger_id,
+                                   "account_source": LedgerKeyStore::SOURCE_NAME,
+                               });
                                match v {
                                    serde_json::Value::Object(m) => m,
                                    _ => panic!("We should have written a panic above."),
@@ -255,15 +253,10 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                 Ok(resp.render(format, color))
             }
             ("import", Some(m)) => {
-                let lock_arg = if let Some(raw_ledger_id) = AccountIdParser::default().from_matches_opt(m, "ledger", false)? {
-                    match raw_ledger_id {
-                        AccountId::LedgerId(ledger_id) => {
-                            self.ledger_key_store
-                                .import_account(&ledger_id)
-                                .map_err(|err| err.to_string())?
-                        },
-                        _ => panic!("Not a valid ledger_id".to_string())
-                    }
+                let lock_arg = if let Some(raw_ledger_id) = FixedHashParser::<H256>::default().from_matches_opt(m, "ledger", false)? {
+                    self.ledger_key_store
+                        .import_account(&LedgerId (raw_ledger_id))
+                        .map_err(|err| err.to_string())?
                 } else {
                     let secp_key: Option<PrivkeyWrapper> =
                         PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
@@ -378,18 +371,27 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                 let change_length: u32 =
                     FromStrParser::<u32>::default().from_matches(m, "change-length")?;
 
-                let password = read_password(false, None)?;
-                let key_set = self
-                    .key_store
-                    .derived_key_set_by_index_with_password(
-                        &lock_arg,
-                        password.as_bytes(),
-                        from_receiving_index,
-                        receiving_length,
-                        from_change_index,
-                        change_length,
-                    )
-                    .map_err(|err| err.to_string())?;
+                let key_set = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
+                    account.derived_key_set_by_index(
+                            from_receiving_index,
+                            receiving_length,
+                            from_change_index,
+                            change_length,
+                        )
+                } else {
+                    let password = read_password(false, None)?;
+                    self
+                        .key_store
+                        .derived_key_set_by_index_with_password(
+                            &lock_arg,
+                            password.as_bytes(),
+                            from_receiving_index,
+                            receiving_length,
+                            from_change_index,
+                            change_length,
+                        )
+                        .map_err(|err| err.to_string())?
+                };
                 let get_addresses = |set: &[(DerivationPath, H160)]| {
                     set.iter()
                         .map(|(path, hash160)| {
@@ -408,33 +410,21 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                 Ok(resp.render(format, color))
             }
             ("extended-address", Some(m)) => {
-                let account_id = AccountIdParser::default().from_matches(m, "account-id")?;
+                let lock_arg: H160 =
+                    FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
                 let path: DerivationPath = DerivationPathParser.from_matches(m, "path")?;
-                let (extended_pubkey, account_source) = match account_id {
-                    AccountId::SoftwareMasterKey(lock_arg) => (
-                        {
-                            let password = read_password(false, None)?;
-                            self.key_store
-                                .extended_pubkey_with_password(
-                                    &lock_arg,
-                                    path.as_ref(),
-                                    password.as_bytes(),
-                                )
-                                .map_err(|err| err.to_string())?
-                        },
-                        KeyStore::SOURCE_NAME,
-                    ),
-                    AccountId::LedgerId(ledger_id) => (
-                        self.ledger_key_store
-                            .borrow_account(&Right (ledger_id))
-                            .map_err(|err| err.to_string())?
-                            .extended_pubkey(path.as_ref())
-                            .map_err(|err| err.to_string())?,
-                        LedgerKeyStore::SOURCE_NAME,
-                    ),
+
+                let extended_pubkey = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
+                    account.extended_pubkey(path.as_ref())
+                        .map_err(|err| err.to_string())?
+                } else {
+                    let password = read_password(false, None)?;
+                    self.key_store
+                        .extended_pubkey_with_password(&lock_arg, path.as_ref(), password.as_bytes())
+                        .map_err(|err| err.to_string())?
                 };
                 let address_payload = AddressPayload::from_pubkey(&extended_pubkey.public_key);
-                let resp = address_resp(account_source, &address_payload);
+                let resp = address_resp(&address_payload);
                 Ok(resp.render(format, color))
             }
             _ => Err(matches.usage().to_owned()),
@@ -443,14 +433,12 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
 }
 
 fn address_resp(
-    account_source: &'static str,
     address_payload: &AddressPayload,
 ) -> serde_json::value::Value {
     let lock_hash: H256 = Script::from(address_payload).calc_script_hash().unpack();
     serde_json::json!({
         "lock_arg": format!("{:#x}", H160::from_slice(address_payload.args().as_ref()).unwrap()),
         "lock_hash": lock_hash,
-        "account_source": account_source,
         "address": {
             "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
             "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),

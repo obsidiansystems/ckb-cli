@@ -25,14 +25,13 @@ use ckb_types::{
 use clap::{App, Arg, ArgMatches, SubCommand};
 use faster_hex::hex_string;
 use serde_derive::{Deserialize, Serialize};
-use either::Either::Right;
 
-use super::{account::AccountId, CliSubCommand};
+use super::CliSubCommand;
 use crate::utils::{
     arg,
     arg_parser::{
         AddressParser, ArgParser, CapacityParser, DerivationPathParser, FilePathParser,
-        FixedHashParser, FromAccountParser, FromStrParser, HexParser, PrivkeyPathParser,
+        FixedHashParser, FromStrParser, HexParser, PrivkeyPathParser,
         PrivkeyWrapper,
     },
     key_adapter::KeyAdapter,
@@ -468,8 +467,8 @@ impl<'a> CliSubCommand for TxSubCommand<'a> {
                 let tx_file: PathBuf = FilePathParser::new(true).from_matches(m, "tx-file")?;
                 let privkey_opt: Option<PrivkeyWrapper> =
                     PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let account_opt: Option<AccountId> =
-                    FromAccountParser::default().from_matches_opt(m, "from-account", false)?;
+                let account_opt: Option<H160> = FixedHashParser::<H160>::default()
+                    .from_matches_opt(m, "from-account", false)?;
 
                 // destructure-borrow to allow separate access
                 let Self {
@@ -483,29 +482,20 @@ impl<'a> CliSubCommand for TxSubCommand<'a> {
 
                 let my_path = path.clone();
 
-                let is_ledger = match account_opt.clone().unwrap() {
-                    AccountId::SoftwareMasterKey(_) => false,
-                    AccountId::LedgerId(_) => true,
-                };
+                let is_ledger = ledger_key_store.borrow_account(&account_opt.clone().unwrap()).is_ok();
 
                 let signer: BoxedSignerFn = if let Some(privkey) = privkey_opt {
                     Box::new(KeyAdapter(get_privkey_signer(privkey)?))
                 } else {
-                    match account_opt.unwrap() {
-                        AccountId::SoftwareMasterKey(hash160) => {
-                            let password = read_password(false, None)?;
-                            let key_store = self.key_store.clone();
-                            Box::new(KeyAdapter(get_keystore_signer(
-                                key_store, hash160, password,
-                            )?))
-                        }
-                        AccountId::LedgerId(ref ledger_id) => {
-                            let key = ledger_key_store
-                                .borrow_account(&Right (ledger_id.clone()))
-                                .map_err(|e| e.to_string())?
-                                .clone();
-                            Box::new(KeyAdapter(get_master_key_signer_raw(key, path)?))
-                        }
+                    let hash160 = account_opt.unwrap();
+                    if let Ok(account) = ledger_key_store.borrow_account(&hash160) {
+                        Box::new(KeyAdapter(get_master_key_signer_raw(account.clone(), path)?))
+                    } else {
+                        let password = read_password(false, None)?;
+                        let key_store = self.key_store.clone();
+                        Box::new(KeyAdapter(get_keystore_signer(
+                            key_store, hash160, password,
+                        )?))
                     }
                 };
 

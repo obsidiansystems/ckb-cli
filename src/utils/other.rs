@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::ArgMatches;
 use colored::Colorize;
-use either::{Either, Either::Right};
+use either::Either;
 use rpassword::prompt_password_stdout;
 
 use ckb_hash::blake2b_256;
@@ -33,12 +33,11 @@ use ckb_types::{
 };
 
 use super::arg_parser::{
-    AddressParser, ArgParser, FixedHashParser, FromAccountParser, HexParser, PrivkeyPathParser,
+    AddressParser, ArgParser, FixedHashParser, HexParser, PrivkeyPathParser,
     PrivkeyWrapper, PubkeyHexParser,
 };
 use super::index::{IndexController, IndexRequest, IndexThreadState};
 use super::key_adapter::KeyAdapter;
-use crate::subcommands::account::AccountId;
 
 pub fn read_password(repeat: bool, prompt: Option<&str>) -> Result<String, String> {
     let prompt = prompt.unwrap_or("Password");
@@ -381,9 +380,10 @@ pub fn is_mature(info: &LiveCellInfo, max_mature_number: u64) -> bool {
 
 pub fn privkey_or_from_account(
     m: &ArgMatches,
-) -> Result<Either<PrivkeyWrapper, AccountId>, String> {
+) -> Result<Either<PrivkeyWrapper, H160>, String> {
     let from_privkey_opt = PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-    let from_account_opt = FromAccountParser.from_matches_opt(m, "from-account", false)?;
+    let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
+        .from_matches_opt(m, "from-account", false)?;
     Ok(match (from_privkey_opt, from_account_opt) {
         (Some(pk), None) => Either::Left(pk),
         (None, Some(aid)) => Either::Right(aid),
@@ -392,7 +392,7 @@ pub fn privkey_or_from_account(
 }
 
 pub fn make_address_payload_and_master_key_cap<'a>(
-    from_account: &'a Either<PrivkeyWrapper, AccountId>,
+    from_account: &'a Either<PrivkeyWrapper, H160>,
     key_store: &'a mut KeyStore,
     ledger_key_store: &'a mut LedgerKeyStore,
 ) -> Result<
@@ -410,26 +410,24 @@ pub fn make_address_payload_and_master_key_cap<'a>(
                 None,
                 //Some(Box::new(KeyAdapter(PrivkeyWrapper(from_pubkey.clone())))),
             )
+        },
+        Either::Right(ref hash160) => {
+            if let Ok (account) = ledger_key_store.borrow_account(hash160) {
+                (
+                    None,
+                    Some(Box::new(KeyAdapter(account.clone())))
+                )
+            } else {
+                let password = read_password(false, None)?;
+                (
+                    Some(AddressPayload::from_pubkey_hash(hash160.clone())),
+                    Some(Box::new(KeyAdapter(
+                        key_store
+                            .get_key(&hash160, password.as_bytes())
+                            .map_err(|e| e.to_string())?,
+                    ))),
+                )
+            }
         }
-        Either::Right(AccountId::SoftwareMasterKey(ref hash160)) => {
-            let password = read_password(false, None)?;
-            (
-                Some(AddressPayload::from_pubkey_hash(hash160.clone())),
-                Some(Box::new(KeyAdapter(
-                    key_store
-                        .get_key(&hash160, password.as_bytes())
-                        .map_err(|e| e.to_string())?,
-                ))),
-            )
-        }
-        Either::Right(AccountId::LedgerId(ref ledger_id)) => (
-            None,
-            Some(Box::new(KeyAdapter(
-                ledger_key_store
-                    .borrow_account(&Right (ledger_id.clone()))
-                    .map_err(|e| e.to_string())?
-                    .clone(),
-            ))),
-        ),
     })
 }
