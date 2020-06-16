@@ -146,6 +146,19 @@ where
     fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
         (&**self).extended_pubkey(path)
     }
+
+    fn derived_pubkey_hash(&self, path: &[ChildNumber]) -> Result<H160, Self::Err> {
+        (&**self).derived_pubkey_hash(path)
+    }
+
+    fn derived_key_set(
+        &self,
+        external_max_len: u32,
+        change_last: &H160,
+        change_max_len: u32,
+    ) -> Result<DerivedKeySet, Either<Self::Err, SearchDerivedAddrFailed>> {
+        (&**self).derived_key_set(external_max_len, change_last, change_max_len)
+    }
 }
 
 /// Trait for signing
