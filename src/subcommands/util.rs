@@ -306,6 +306,9 @@ message = "0x"
             }
             ("sign-data", Some(m)) => {
                 let binary: Vec<u8> = HexParser.from_matches(m, "binary-hex")?;
+                let magic_string = String::from("Nervos Message:");
+                let magic_bytes = magic_string.as_bytes();
+                let binary_with_magic = [magic_bytes, &binary].concat();
                 let recoverable = m.is_present("recoverable");
                 let from_privkey_opt: Option<PrivkeyWrapper> =
                     PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
@@ -323,7 +326,7 @@ message = "0x"
                             .map_err(|_| err)
                     })?;
 
-                let message = H256::from(blake2b_256(&binary));
+                let message = H256::from(blake2b_256(&binary_with_magic));
                 let key_store_opt = from_account_opt
                     .as_ref()
                     .map(|account| (&*self.key_store, account));
