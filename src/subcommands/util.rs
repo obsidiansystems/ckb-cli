@@ -30,6 +30,7 @@ use crate::utils::{
     arg_parser::{
         AddressParser, AddressPayloadOption, ArgParser, FilePathParser, FixedHashParser,
         FromStrParser, HexParser, PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser,
+        NullParser,
     },
     other::{get_address, read_password, serialize_signature},
     printer::{OutputFormat, Printable},
@@ -75,11 +76,12 @@ impl<'a> UtilSubCommand<'a> {
             .required(true)
             .about("Target address (see: https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0021-ckb-address-format/0021-ckb-address-format.md)");
 
+        let binary_hex_arg_name = "binary-hex";
         let binary_hex_arg = Arg::with_name("binary-hex")
             .long("binary-hex")
             .takes_value(true)
-            .required(true)
             .validator(|input| HexParser.validate(input));
+
         let arg_sighash_address = Arg::with_name("sighash-address")
             .long("sighash-address")
             .required(true)
@@ -95,11 +97,10 @@ impl<'a> UtilSubCommand<'a> {
             .long("recoverable")
             .about("Sign use recoverable signature");
 
+        let arg_message_name = "message";
         let arg_message = Arg::with_name("message")
             .long("message")
-            .takes_value(true)
-            .required(true)
-            .validator(|input| FixedHashParser::<H256>::default().validate(input));
+            .takes_value(true);
 
         App::new(name)
             .about("Utilities")
@@ -112,8 +113,22 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(arg_pubkey.clone().required(false))
                     .arg(arg_address.clone().required(false))
                     .arg(arg::lock_arg().clone()),
-                App::new("sign-data")
-                    .about("Sign data with secp256k1 signature ")
+                // App::new("sign-data")
+                //     .about("Sign data with secp256k1 signature ")
+                //     .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
+                //     .arg(
+                //         arg::from_account()
+                //             .required_unless(arg::privkey_path().get_name())
+                //             .conflicts_with(arg::privkey_path().get_name()),
+                //     )
+                //     .arg(arg_recoverable.clone())
+                //     .arg(
+                //         binary_hex_arg
+                //             .clone()
+                //             .about("The data to be signed (blake2b hashed with 'ckb-default-hash' personalization)")
+                //     ),
+                App::new("sign-message")
+                    .about("Sign message with secp256k1 signature")
                     .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
                     .arg(
                         arg::from_account()
@@ -124,18 +139,17 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(
                         binary_hex_arg
                             .clone()
-                            .about("The data to be signed (blake2b hashed with 'ckb-default-hash' personalization)")
-                    ),
-                App::new("sign-message")
-                    .about("Sign message with secp256k1 signature")
-                    .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
-                    .arg(
-                        arg::from_account()
-                            .required_unless(arg::privkey_path().get_name())
-                            .conflicts_with(arg::privkey_path().get_name()),
+                            .about("The data to be signed in hex")
+                            .required_unless(arg_message_name)
+                            .conflicts_with(arg_message_name),
                     )
-                    .arg(arg_recoverable.clone())
-                    .arg(arg_message.clone().about("The message to be signed (32 bytes)")),
+                    .arg(
+                        arg_message
+                            .clone()
+                            .required_unless(binary_hex_arg_name)
+                            .conflicts_with(binary_hex_arg_name)
+                            .about("The message to be signed in string form"),
+                    ),
                 App::new("verify-signature")
                     .about("Verify a compact format signature")
                     .arg(arg::pubkey())
@@ -144,14 +158,27 @@ impl<'a> UtilSubCommand<'a> {
                         arg::from_account()
                             .conflicts_with_all(&[arg::privkey_path().get_name(), arg::pubkey().get_name()]),
                     )
-                    .arg(arg_message.clone().about("The message to be verify (32 bytes)"))
                     .arg(
                         Arg::with_name("signature")
                             .long("signature")
                             .takes_value(true)
                             .required(true)
                             .validator(|input| HexParser.validate(input))
-                            .about("The compact format signature (support recoverable signature)")
+                            .about("The compact format signature (support recoverable signature)"),
+                    )
+                    .arg(
+                        binary_hex_arg
+                            .clone()
+                            .about("The data to be signed in hex")
+                            .required_unless(arg_message_name)
+                            .conflicts_with(arg_message_name),
+                    )
+                    .arg(
+                        arg_message
+                            .clone()
+                            .required_unless(binary_hex_arg_name)
+                            .conflicts_with(binary_hex_arg_name)
+                            .about("The message to be signed in string form"),
                     ),
                 App::new("eaglesong")
                     .about("Hash binary use eaglesong algorithm")
@@ -304,11 +331,21 @@ message = "0x"
                 });
                 Ok(resp.render(format, color))
             }
-            ("sign-data", Some(m)) => {
-                let binary: Vec<u8> = HexParser.from_matches(m, "binary-hex")?;
+            ("sign-message", Some(m)) => {
                 let magic_string = String::from("Nervos Message:");
                 let magic_bytes = magic_string.as_bytes();
-                let binary_with_magic = [magic_bytes, &binary].concat();
+                let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
+                let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
+
+                let to_sign : Vec<u8> = if let Some(binary) = binary_opt { 
+                    binary
+                } else if let Some(message_str) = message_str_opt {
+                    message_str.as_bytes().to_vec()
+                    //TODO: FIXME
+                } else {
+                    return Err(String::from("No value to sign"));
+                };
+                let msg_with_magic = [magic_bytes, &to_sign].concat();
                 let recoverable = m.is_present("recoverable");
                 let from_privkey_opt: Option<PrivkeyWrapper> =
                     PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
@@ -326,7 +363,7 @@ message = "0x"
                             .map_err(|_| err)
                     })?;
 
-                let message = H256::from(blake2b_256(&binary_with_magic));
+                let message = H256::from(blake2b_256(&msg_with_magic));
                 let key_store_opt = from_account_opt
                     .as_ref()
                     .map(|account| (&*self.key_store, account));
@@ -343,41 +380,41 @@ message = "0x"
                 });
                 Ok(result.render(format, color))
             }
-            ("sign-message", Some(m)) => {
-                let message: H256 =
-                    FixedHashParser::<H256>::default().from_matches(m, "message")?;
-                let recoverable = m.is_present("recoverable");
-                let from_privkey_opt: Option<PrivkeyWrapper> =
-                    PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
-                    .from_matches_opt(m, "from-account", false)
-                    .or_else(|err| {
-                        let result: Result<Option<Address>, String> =
-                            AddressParser::new_sighash().from_matches_opt(m, "from-account", false);
-                        result
-                            .map(|address_opt| {
-                                address_opt.map(|address| {
-                                    H160::from_slice(&address.payload().args()).unwrap()
-                                })
-                            })
-                            .map_err(|_| err)
-                    })?;
+            // ("sign-message", Some(m)) => {
+            //     let message: H256 =
+            //         FixedHashParser::<H256>::default().from_matches(m, "message")?;
+            //     let recoverable = m.is_present("recoverable");
+            //     let from_privkey_opt: Option<PrivkeyWrapper> =
+            //         PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
+            //     let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
+            //         .from_matches_opt(m, "from-account", false)
+            //         .or_else(|err| {
+            //             let result: Result<Option<Address>, String> =
+            //                 AddressParser::new_sighash().from_matches_opt(m, "from-account", false);
+            //             result
+            //                 .map(|address_opt| {
+            //                     address_opt.map(|address| {
+            //                         H160::from_slice(&address.payload().args()).unwrap()
+            //                     })
+            //                 })
+            //                 .map_err(|_| err)
+            //         })?;
 
-                let key_store_opt = from_account_opt
-                    .as_ref()
-                    .map(|account| (&*self.key_store, account));
-                let signature = sign_message(
-                    from_privkey_opt.as_ref(),
-                    key_store_opt,
-                    recoverable,
-                    &message,
-                )?;
-                let result = serde_json::json!({
-                    "signature": format!("0x{}", hex_string(&signature).unwrap()),
-                    "recoverable": recoverable,
-                });
-                Ok(result.render(format, color))
-            }
+            //     let key_store_opt = from_account_opt
+            //         .as_ref()
+            //         .map(|account| (&*self.key_store, account));
+            //     let signature = sign_message(
+            //         from_privkey_opt.as_ref(),
+            //         key_store_opt,
+            //         recoverable,
+            //         &message,
+            //     )?;
+            //     let result = serde_json::json!({
+            //         "signature": format!("0x{}", hex_string(&signature).unwrap()),
+            //         "recoverable": recoverable,
+            //     });
+            //     Ok(result.render(format, color))
+            // }
             ("verify-signature", Some(m)) => {
                 let message: H256 =
                     FixedHashParser::<H256>::default().from_matches(m, "message")?;
