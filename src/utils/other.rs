@@ -338,6 +338,7 @@ where
     let derived_key = key
         .extended_privkey(path.as_ref())
         .map_err(|err| err.to_string())?;
+    println!("get_master_key_signer_raw: path {:?}", path);
     get_privkey_signer(derived_key)
 }
 

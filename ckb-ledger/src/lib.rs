@@ -6,6 +6,7 @@ use std::fs;
 use std::io::prelude::{Write, Read};
 use std::convert::TryInto;
 use std::str::FromStr;
+use backtrace::Backtrace;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -416,6 +417,8 @@ impl AbstractPrivKey for LedgerCap {
     type SignerSingleShot = SignEntireHelper<LedgerClosure>;
 
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
+        let current_backtrace = Backtrace::new();
+        println!("{:?}", current_backtrace);
         let mut data = Vec::new();
         data.write_u8(self.path.as_ref().len() as u8)
             .expect(WRITE_ERR_MSG);
@@ -423,11 +426,12 @@ impl AbstractPrivKey for LedgerCap {
             data.write_u32::<BigEndian>(From::from(child_num))
                 .expect(WRITE_ERR_MSG);
         }
-        let command = apdu::extend_public_key(data);
+        let command = apdu::extend_public_key(data.clone());
         let ledger_app = self.master.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
         let response = ledger_app.exchange(command)?;
-        debug!(
-            "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
+        println!(
+            "Nervos CKB Ledger app public_key: data : {:02x?}, \n raw public key {:02x?} , \n for path {:?}",
+            &data,
             &response, &self.path
         );
         let mut resp = &response.data[..];
