@@ -115,7 +115,6 @@ impl LedgerKeyStore {
     }
 
     fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
-        let mut imported_accounts = HashMap::default();
         for entry in fs::read_dir(&self.data_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -124,10 +123,15 @@ impl LedgerKeyStore {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents)?;
                 let account = ledger_imported_account_from_json(&contents)?;
-                imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {account, ledger_app: None });
+                match self.imported_accounts.get(&account.lock_arg) {
+                    Some (_) => (),
+                    None => {
+                        self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {account, ledger_app: None });
+                        ()
+                    },
+                }
             }
         }
-        self.imported_accounts = imported_accounts;
         Ok(())
     }
 
