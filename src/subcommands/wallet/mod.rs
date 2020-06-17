@@ -528,19 +528,28 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                     };
                     let mut lock_hashes = vec![Script::from(&address_payload).calc_script_hash()];
                     if m.is_present("derived") {
-                        let password = read_password(false, None)?;
                         let lock_arg = H160::from_slice(address_payload.args().as_ref()).unwrap();
-                        let key_set = self
-                            .key_store
-                            .derived_key_set_by_index_with_password(
-                                &lock_arg,
-                                password.as_bytes(),
+                        let key_set = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
+                            account.derived_key_set_by_index(
                                 0,
                                 receiving_address_length,
                                 0,
                                 change_address_length,
                             )
-                            .map_err(|err| err.to_string())?;
+                        } else {
+                            let password = read_password(false, None)?;
+                            self
+                                .key_store
+                                .derived_key_set_by_index_with_password(
+                                    &lock_arg,
+                                    password.as_bytes(),
+                                    0,
+                                    receiving_address_length,
+                                    0,
+                                    change_address_length,
+                                )
+                                .map_err(|err| err.to_string())?
+                        };
                         for (_, hash160) in key_set.external.iter().chain(key_set.change.iter()) {
                             let payload = AddressPayload::from_pubkey_hash(hash160.clone());
                             lock_hashes.push(Script::from(&payload).calc_script_hash());
