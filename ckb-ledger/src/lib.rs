@@ -245,6 +245,18 @@ pub struct LedgerMasterCap {
 }
 
 impl LedgerMasterCap {
+    pub fn derive_extended_public_key(
+        &self,
+        chain: KeyChain,
+        index: ChildNumber,
+    ) -> ExtendedPubKey {
+        let epk = match chain {
+            KeyChain::External => self.account.ext_pub_key_external,
+            KeyChain::Change => self.account.ext_pub_key_change,
+        };
+        epk.ckd_pub(&SECP256K1, index).unwrap()
+    }
+
     pub fn derived_key_set_by_index(
         &self,
         external_start: u32,
@@ -253,16 +265,12 @@ impl LedgerMasterCap {
         change_length: u32,
     ) -> DerivedKeySet {
         let get_pairs = |chain, start, length| {
-            let epk = match chain {
-                KeyChain::External => self.account.ext_pub_key_external,
-                KeyChain::Change => self.account.ext_pub_key_change,
-            };
 
             (0..length)
                 .map(|i| {
                     let path_string = format!("m/44'/309'/0'/{}/{}", chain as u8, i + start);
                     let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-                    let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i + start }).unwrap();
+                    let extended_pubkey = self.derive_extended_public_key(chain, ChildNumber::from(i + start));
                     let pubkey = extended_pubkey.public_key;
                     let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
                         .expect("Generate hash(H160) from pubkey failed");
