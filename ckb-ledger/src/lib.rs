@@ -423,7 +423,35 @@ impl AbstractPrivKey for LedgerCap {
 
     type SignerSingleShot = SignEntireHelper<LedgerClosure>;
 
+    // Tries to derive from extended_pubkey if possible
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
+        let my_path_v: Vec<ChildNumber> = self.path.clone().into();
+
+        // TODO: store account_id and get rid of hardcoded account here
+        let account_root_v: Vec<ChildNumber> = DerivationPath::from_str("m/44'/309'/0'").unwrap().into();
+        let same_account = account_root_v.iter().zip(my_path_v.iter())
+            .all(|(c1, c2)| c1 == c2);
+
+        let maybe_chain_index = if same_account && my_path_v.len() == 5 {
+            (if my_path_v[3] == ChildNumber::from(0) {
+                Some (KeyChain::External)
+            } else if my_path_v[3] == ChildNumber::from(1) {
+                Some (KeyChain::Change)
+            } else {
+                None
+            }).map (|c| {
+                (c, my_path_v[4])
+            })
+        } else {
+            None
+        };
+        match maybe_chain_index {
+            Some ((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
+            None => self.public_key_prompt()
+        }
+    }
+
+    fn public_key_prompt(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         let mut data = Vec::new();
         data.write_u8(self.path.as_ref().len() as u8)
             .expect(WRITE_ERR_MSG);
