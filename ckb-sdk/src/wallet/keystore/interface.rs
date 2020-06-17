@@ -168,8 +168,12 @@ pub trait AbstractPrivKey: DynClone {
 
     type SignerSingleShot: SignerSingleShot<Err = Self::Err>;
 
-    /// Get the corresponding public key
+    /// Get the corresponding public key, derive automatically if possible
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
+    /// Get the corresponding public key, always prompt user
+    fn public_key_prompt(&self) -> Result<secp256k1::PublicKey, Self::Err> {
+        self.public_key()
+    }
     // TODO make this not take a hash
     fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
     fn begin_sign_recoverable(&self) -> Self::SignerSingleShot;
