@@ -113,20 +113,6 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(arg_pubkey.clone().required(false))
                     .arg(arg_address.clone().required(false))
                     .arg(arg::lock_arg().clone()),
-                // App::new("sign-data")
-                //     .about("Sign data with secp256k1 signature ")
-                //     .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
-                //     .arg(
-                //         arg::from_account()
-                //             .required_unless(arg::privkey_path().get_name())
-                //             .conflicts_with(arg::privkey_path().get_name()),
-                //     )
-                //     .arg(arg_recoverable.clone())
-                //     .arg(
-                //         binary_hex_arg
-                //             .clone()
-                //             .about("The data to be signed (blake2b hashed with 'ckb-default-hash' personalization)")
-                //     ),
                 App::new("sign-message")
                     .about("Sign message with secp256k1 signature")
                     .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
