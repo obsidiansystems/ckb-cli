@@ -96,11 +96,13 @@ impl LedgerKeyStore {
                 .find(|cap| cap.account.ledger_id.clone() == ledger_id);
             match maybe_cap{
                 Some (cap) => {
-                    let account = cap.account.clone();
-                    self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
-                        account: account,
-                        ledger_app: Some (Arc::new(raw_ledger_app)),
-                    });
+                    if cap.ledger_app.is_none() {
+                        let account = cap.account.clone();
+                        self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
+                            account: account,
+                            ledger_app: Some (Arc::new(raw_ledger_app)),
+                        });
+                    } // else dont do anything
                     ()
                 },
                 _ => {
