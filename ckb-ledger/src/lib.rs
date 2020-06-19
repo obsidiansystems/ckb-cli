@@ -9,6 +9,7 @@ use std::str::FromStr;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
+use either::Either;
 use log::debug;
 use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::RecoveryId, Signature};
 
@@ -16,7 +17,7 @@ use ckb_crypto::secp::SECP256K1;
 use ckb_hash::blake2b_256;
 use ckb_sdk::wallet::{
     is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey,
-    ChildNumber, DerivationPath, DerivedKeySet, ScryptType, ExtendedPubKey, ChainCode, Fingerprint, KeyChain,
+    ChildNumber, DerivationPath, DerivedKeySet, ScryptType, ExtendedPubKey, ChainCode, Fingerprint, KeyChain, SearchDerivedAddrFailed
 };
 use ckb_sdk::SignEntireHelper;
 use ckb_types::{H160, H256};
@@ -244,6 +245,18 @@ pub struct LedgerMasterCap {
 }
 
 impl LedgerMasterCap {
+    pub fn derive_extended_public_key(
+        &self,
+        chain: KeyChain,
+        index: ChildNumber,
+    ) -> ExtendedPubKey {
+        let epk = match chain {
+            KeyChain::External => self.account.ext_pub_key_external,
+            KeyChain::Change => self.account.ext_pub_key_change,
+        };
+        epk.ckd_pub(&SECP256K1, index).unwrap()
+    }
+
     pub fn derived_key_set_by_index(
         &self,
         external_start: u32,
@@ -252,16 +265,12 @@ impl LedgerMasterCap {
         change_length: u32,
     ) -> DerivedKeySet {
         let get_pairs = |chain, start, length| {
-            let epk = match chain {
-                KeyChain::External => self.account.ext_pub_key_external,
-                KeyChain::Change => self.account.ext_pub_key_change,
-            };
 
             (0..length)
                 .map(|i| {
                     let path_string = format!("m/44'/309'/0'/{}/{}", chain as u8, i + start);
                     let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-                    let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i + start }).unwrap();
+                    let extended_pubkey = self.derive_extended_public_key(chain, ChildNumber::from(i + start));
                     let pubkey = extended_pubkey.public_key;
                     let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
                         .expect("Generate hash(H160) from pubkey failed");
@@ -343,6 +352,43 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         })
     }
 
+    fn derived_key_set(
+        &self,
+        external_max_len: u32,
+        change_last: &H160,
+        change_max_len: u32,
+    ) -> Result<DerivedKeySet, Either<Self::Err, SearchDerivedAddrFailed>> {
+        let mut external_key_set = Vec::new();
+        for i in 0..external_max_len {
+            let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::External as u8, i);
+            let path = DerivationPath::from_str(path_string.as_str()).unwrap();
+            let epk = self.account.ext_pub_key_external;
+            let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
+            let pubkey = extended_pubkey.public_key;
+            let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+                .expect("Generate hash(H160) from pubkey failed");
+            external_key_set.push((path, hash));
+        }
+
+        let mut change_key_set = Vec::new();
+        for i in 0..change_max_len {
+            let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::Change as u8, i);
+            let path = DerivationPath::from_str(path_string.as_str()).unwrap();
+            let epk = self.account.ext_pub_key_change;
+            let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
+            let pubkey = extended_pubkey.public_key;
+            let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
+                .expect("Generate hash(H160) from pubkey failed");
+            change_key_set.push((path, hash.clone()));
+            if change_last == &hash {
+                return Ok(DerivedKeySet {
+                    external: external_key_set,
+                    change: change_key_set,
+                });
+            }
+        }
+        Err(Either::Right(SearchDerivedAddrFailed))
+    }
 }
 
 /// A ledger device with the Nervos app constrained to a specific derivation path.
@@ -377,7 +423,35 @@ impl AbstractPrivKey for LedgerCap {
 
     type SignerSingleShot = SignEntireHelper<LedgerClosure>;
 
+    // Tries to derive from extended_pubkey if possible
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
+        let my_path_v: Vec<ChildNumber> = self.path.clone().into();
+
+        // TODO: store account_id and get rid of hardcoded account here
+        let account_root_v: Vec<ChildNumber> = DerivationPath::from_str("m/44'/309'/0'").unwrap().into();
+        let same_account = account_root_v.iter().zip(my_path_v.iter())
+            .all(|(c1, c2)| c1 == c2);
+
+        let maybe_chain_index = if same_account && my_path_v.len() == 5 {
+            (if my_path_v[3] == ChildNumber::from(0) {
+                Some (KeyChain::External)
+            } else if my_path_v[3] == ChildNumber::from(1) {
+                Some (KeyChain::Change)
+            } else {
+                None
+            }).map (|c| {
+                (c, my_path_v[4])
+            })
+        } else {
+            None
+        };
+        match maybe_chain_index {
+            Some ((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
+            None => self.public_key_prompt()
+        }
+    }
+
+    fn public_key_prompt(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         let mut data = Vec::new();
         data.write_u8(self.path.as_ref().len() as u8)
             .expect(WRITE_ERR_MSG);

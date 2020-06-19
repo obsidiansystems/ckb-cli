@@ -5,10 +5,11 @@ use std::collections::HashSet;
 
 use ckb_types::{H160, H256};
 
+use either::{Either, Either::{Left, Right}};
 use ckb_sdk::{
     wallet::{
         AbstractMasterPrivKey, AbstractPrivKey, ChildNumber, ExtendedPubKey,
-        FullyBoxedAbstractPrivkey,
+        FullyBoxedAbstractPrivkey, DerivedKeySet, SearchDerivedAddrFailed
     },
     FullyAbstractSingleShotSigner, SignerFnTrait, SignerSingleShot,
 };
@@ -45,6 +46,20 @@ where
     fn extended_privkey(&self, path: &[ChildNumber]) -> Result<Self::Privkey, Self::Err> {
         let x: Key::Privkey = self.0.extended_privkey(path).map_err(|e| e.to_string())?;
         Ok(Box::new(KeyAdapter(x)))
+    }
+
+    fn derived_key_set(
+        &self,
+        external_max_len: u32,
+        change_last: &H160,
+        change_max_len: u32,
+    ) -> Result<DerivedKeySet, Either<Self::Err, SearchDerivedAddrFailed>> {
+        self.0.derived_key_set(external_max_len, change_last, change_max_len)
+            .map_err(|e| match e {
+                Left (e1) => Left (e1.to_string()),
+                Right (s) => Right (s),
+            }
+            )
     }
 }
 

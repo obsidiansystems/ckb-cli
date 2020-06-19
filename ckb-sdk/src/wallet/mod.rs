@@ -11,7 +11,7 @@ pub use keystore::{
     interface::{
         is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey,
         DerivedKeySet, FullyBoxedAbstractMasterPrivkey, FullyBoxedAbstractPrivkey, KeyChain,
-        MANDATORY_PREFIX, hash_public_key,
+        MANDATORY_PREFIX, SearchDerivedAddrFailed, hash_public_key,
     },
     zeroize_privkey, zeroize_slice, CipherParams, Crypto, Error as KeyStoreError, KdfParams, Key,
     KeyStore, KeyTimeout, MasterPrivKey, ScryptParams, ScryptType,

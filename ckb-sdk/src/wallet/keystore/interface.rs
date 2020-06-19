@@ -146,6 +146,19 @@ where
     fn extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, Self::Err> {
         (&**self).extended_pubkey(path)
     }
+
+    fn derived_pubkey_hash(&self, path: &[ChildNumber]) -> Result<H160, Self::Err> {
+        (&**self).derived_pubkey_hash(path)
+    }
+
+    fn derived_key_set(
+        &self,
+        external_max_len: u32,
+        change_last: &H160,
+        change_max_len: u32,
+    ) -> Result<DerivedKeySet, Either<Self::Err, SearchDerivedAddrFailed>> {
+        (&**self).derived_key_set(external_max_len, change_last, change_max_len)
+    }
 }
 
 /// Trait for signing
@@ -155,8 +168,12 @@ pub trait AbstractPrivKey: DynClone {
 
     type SignerSingleShot: SignerSingleShot<Err = Self::Err>;
 
-    /// Get the corresponding public key
+    /// Get the corresponding public key, derive automatically if possible
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
+    /// Get the corresponding public key, always prompt user
+    fn public_key_prompt(&self) -> Result<secp256k1::PublicKey, Self::Err> {
+        self.public_key()
+    }
     // TODO make this not take a hash
     fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
     fn begin_sign_recoverable(&self) -> Self::SignerSingleShot;
