@@ -1,10 +1,11 @@
 use chrono::prelude::*;
-use ckb_crypto::secp::SECP256K1;
+use ckb_crypto::secp::{SECP256K1 };
 use ckb_hash::blake2b_256;
+use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::KeyStore,
+    wallet::{AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -27,9 +28,10 @@ use crate::utils::{
         AddressParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
         PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser, NullParser
     },
-    other::{get_address, read_password, serialize_signature},
+    other::{get_address, read_password, serialize_signature, privkey_or_from_account},
     printer::{OutputFormat, Printable},
 };
+use either::{ Either, Left, Right };
 
 const FLAG_SINCE_EPOCH_NUMBER: u64 =
     0b010_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
@@ -39,16 +41,19 @@ const BLOCK_PERIOD: u64 = 8 * 1000; // 8 seconds
 pub struct UtilSubCommand<'a> {
     rpc_client: &'a mut HttpRpcClient,
     key_store: &'a mut KeyStore,
+    ledger_key_store: &'a mut LedgerKeyStore,
 }
 
 impl<'a> UtilSubCommand<'a> {
     pub fn new(
         rpc_client: &'a mut HttpRpcClient,
         key_store: &'a mut KeyStore,
+        ledger_key_store: &'a mut LedgerKeyStore,
     ) -> UtilSubCommand<'a> {
         UtilSubCommand {
             rpc_client,
             key_store,
+            ledger_key_store,
         }
     }
 
@@ -314,34 +319,26 @@ message = "0x"
                 let msg_with_magic = [magic_bytes, &to_sign].concat();
 
                 let recoverable = m.is_present("recoverable");
-                let from_privkey_opt: Option<PrivkeyWrapper> =
-                    PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
-                    .from_matches_opt(m, "from-account", false)
-                    .or_else(|err| {
-                        let result: Result<Option<Address>, String> =
-                            AddressParser::new_sighash().from_matches_opt(m, "from-account", false);
-                        result
-                            .map(|address_opt| {
-                                address_opt.map(|address| {
-                                    H160::from_slice(&address.payload().args()).unwrap()
-                                })
-                            })
-                            .map_err(|_| err)
-                    })?;
-
-                let message = H256::from(blake2b_256(&msg_with_magic));
-                let key_store_opt = from_account_opt
-                    .as_ref()
-                    .map(|account| (&*self.key_store, account));
+                let from_account = privkey_or_from_account(m)?;
+                let priv_or_facc_with_kstore: 
+                      Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)> =
+                      match from_account {
+                            Left(pkey) => { Left(pkey) }
+                            Right(lock_arg) => {
+                                if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
+                                    Right((lock_arg, Right(self.ledger_key_store)))
+                                } else {
+                                    Right((lock_arg, Left(self.key_store)))
+                                }
+                            }
+                };
                 let signature = sign_message(
-                    from_privkey_opt.as_ref(),
-                    key_store_opt,
+                    priv_or_facc_with_kstore,
                     recoverable,
-                    &message,
+                    &msg_with_magic,
                 )?;
                 let result = serde_json::json!({
-                    "message": format!("{:#x}", message),
+                    "message-hash": format!("{:#x}", H256::from(blake2b_256(&msg_with_magic))),
                     "signature": format!("0x{}", hex_string(&signature).unwrap()),
                     "recoverable": recoverable,
                 });
@@ -543,40 +540,46 @@ message = "0x"
         }
     }
 }
-
 fn sign_message(
-    from_privkey_opt: Option<&PrivkeyWrapper>,
-    from_account_opt: Option<(&KeyStore, &H160)>,
+    key_and_store : Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)>,
     recoverable: bool,
-    message: &H256,
+    message: &[u8],
 ) -> Result<Vec<u8>, String> {
-    match (from_privkey_opt, from_account_opt, recoverable) {
-        (Some(privkey), _, false) => {
-            let message = secp256k1::Message::from_slice(message.as_bytes()).unwrap();
-            Ok(SECP256K1
-                .sign(&message, privkey)
-                .serialize_compact()
-                .to_vec())
+    let hash = H256::from(blake2b_256(message));
+    let hash_bytes = secp256k1::Message::from_slice(hash.as_bytes()).unwrap();
+    match key_and_store {
+        Either::Left(privkey) => {
+            if recoverable {
+                Ok(serialize_signature(&SECP256K1.sign_recoverable(&hash_bytes, &privkey)).to_vec())
+            } else {
+                Ok(SECP256K1
+                    .sign(&hash_bytes, &privkey)
+                    .serialize_compact()
+                    .to_vec())
+            }
         }
-        (Some(privkey), _, true) => {
-            let message = secp256k1::Message::from_slice(message.as_bytes()).unwrap();
-            Ok(serialize_signature(&SECP256K1.sign_recoverable(&message, privkey)).to_vec())
-        }
-        (None, Some((key_store, account)), false) => {
+        Either::Right((account, Either::Left(keystore))) => {
             let password = read_password(false, None)?;
-            key_store
-                .sign_with_password(account, &[], message, password.as_bytes())
-                .map(|sig| sig.serialize_compact().to_vec())
-                .map_err(|err| err.to_string())
+            let res = if recoverable {
+                keystore
+                    .sign_recoverable_with_password(&account, &[], &hash, password.as_bytes())
+                    .map(|sig| serialize_signature(&sig).to_vec())
+            } else {
+                keystore
+                    .sign_with_password(&account, &[], &hash, password.as_bytes())
+                    .map(|sig| sig.serialize_compact().to_vec())
+            };
+            res.map_err(|err| err.to_string())
         }
-        (None, Some((key_store, account)), true) => {
-            let password = read_password(false, None)?;
-            key_store
-                .sign_recoverable_with_password(account, &[], message, password.as_bytes())
-                .map(|sig| serialize_signature(&sig).to_vec())
-                .map_err(|err| err.to_string())
+        Either::Right((account, Either::Right(ledger_keystore))) => {
+            let key = ledger_keystore.borrow_account(&account)
+                .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
+                .map_err(|err| err.to_string())?;
+            key.sign(&hash)
+               .map_err(|err| err.to_string())
+               .map(|sig| sig.serialize_compact().to_vec() )
         }
-        _ => Err(String::from("Both privkey and key store is missing")),
+        _ => { Err(String::from("Both privkey and key store is missing")) }
     }
 }
 
