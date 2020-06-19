@@ -77,8 +77,8 @@ impl<'a> UtilSubCommand<'a> {
             .about("Target address (see: https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0021-ckb-address-format/0021-ckb-address-format.md)");
 
         let binary_hex_arg_name = "binary-hex";
-        let binary_hex_arg = Arg::with_name("binary-hex")
-            .long("binary-hex")
+        let binary_hex_arg = Arg::with_name(binary_hex_arg_name)
+            .long(binary_hex_arg_name)
             .takes_value(true)
             .validator(|input| HexParser.validate(input));
 
@@ -98,8 +98,8 @@ impl<'a> UtilSubCommand<'a> {
             .about("Sign use recoverable signature");
 
         let arg_message_name = "message";
-        let arg_message = Arg::with_name("message")
-            .long("message")
+        let arg_message = Arg::with_name(arg_message_name)
+            .long(arg_message_name)
             .takes_value(true);
 
         App::new(name)
@@ -323,7 +323,6 @@ message = "0x"
                 let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
                 let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
 
-                //TODO: Handle case when BOTH exist
                 let to_sign : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
@@ -373,7 +372,6 @@ message = "0x"
                 let magic_string = String::from("Nervos Message:");
                 let magic_bytes = magic_string.as_bytes();
 
-                //TODO: Handle case when BOTH exist
                 let to_verify : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
