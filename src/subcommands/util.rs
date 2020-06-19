@@ -320,7 +320,7 @@ message = "0x"
 
                 let recoverable = m.is_present("recoverable");
                 let from_account = privkey_or_from_account(m)?;
-                let priv_or_facc_with_kstore: 
+                let priv_or_acc_with_kstore: 
                       Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)> =
                       match from_account {
                             Left(pkey) => { Left(pkey) }
@@ -333,7 +333,7 @@ message = "0x"
                             }
                 };
                 let signature = sign_message(
-                    priv_or_facc_with_kstore,
+                    priv_or_acc_with_kstore,
                     recoverable,
                     &msg_with_magic,
                 )?;
@@ -566,7 +566,7 @@ fn sign_message(
                     .map(|sig| serialize_signature(&sig).to_vec())
             } else {
                 keystore
-                    .sign_with_password(&account, &[], &hash, password.as_bytes())
+                    .sign_with_password(&account, &[], &message, password.as_bytes())
                     .map(|sig| sig.serialize_compact().to_vec())
             };
             res.map_err(|err| err.to_string())
@@ -575,11 +575,10 @@ fn sign_message(
             let key = ledger_keystore.borrow_account(&account)
                 .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
-            key.sign(&hash)
+            key.sign(message)
                .map_err(|err| err.to_string())
                .map(|sig| sig.serialize_compact().to_vec() )
         }
-        _ => { Err(String::from("Both privkey and key store is missing")) }
     }
 }
 

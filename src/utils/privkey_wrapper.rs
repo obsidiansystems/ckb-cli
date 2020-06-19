@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use void::Void;
 
+use ckb_hash::blake2b_256;
 use ckb_crypto::secp::SECP256K1;
 use ckb_sdk::wallet::{zeroize_privkey, AbstractPrivKey};
 use ckb_sdk::SignPrehashedHelper;
@@ -38,9 +39,10 @@ impl AbstractPrivKey for PrivkeyWrapper {
         Ok(secp256k1::PublicKey::from_secret_key(&SECP256K1, self))
     }
 
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err> {
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Self::Err> {
+        let msg_hash = H256::from(blake2b_256(message));
         let message =
-            secp256k1::Message::from_slice(message.as_bytes()).expect("Convert to message failed");
+            secp256k1::Message::from_slice(msg_hash.as_bytes()).expect("Convert to message failed");
         Ok(SECP256K1.sign(&message, &self.0))
     }
 

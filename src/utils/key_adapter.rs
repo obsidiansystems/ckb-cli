@@ -3,7 +3,7 @@ use secp256k1::recovery::RecoverableSignature;
 
 use std::collections::HashSet;
 
-use ckb_types::{H160, H256};
+use ckb_types::{H160};
 
 use ckb_sdk::{
     wallet::{
@@ -63,7 +63,7 @@ where
         self.0.public_key().map_err(|e| e.to_string())
     }
 
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err> {
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Self::Err> {
         self.0.sign(message).map_err(|e| e.to_string())
     }
 

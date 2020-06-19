@@ -158,7 +158,7 @@ pub trait AbstractPrivKey: DynClone {
     /// Get the corresponding public key
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err>;
     // TODO make this not take a hash
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err>;
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Self::Err>;
     fn begin_sign_recoverable(&self) -> Self::SignerSingleShot;
 }
 
@@ -180,7 +180,7 @@ where
         (&**self).public_key()
     }
 
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err> {
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Self::Err> {
         (&**self).sign(message)
     }
 
@@ -198,7 +198,7 @@ impl<K: ?Sized + AbstractPrivKey> AbstractPrivKey for &K {
         (*self).public_key()
     }
 
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Self::Err> {
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Self::Err> {
         (*self).sign(message)
     }
 
@@ -220,9 +220,11 @@ impl AbstractPrivKey for ExtendedPrivKey {
         Ok(ExtendedPubKey::from_private(&SECP256K1, self).public_key)
     }
 
-    fn sign(&self, message: &H256) -> Result<secp256k1::Signature, Void> {
+    fn sign(&self, message: &[u8]) -> Result<secp256k1::Signature, Void> {
+        
+        let msg_hash = H256::from(blake2b_256(message));
         let message =
-            secp256k1::Message::from_slice(message.as_bytes()).expect("Convert to message failed");
+            secp256k1::Message::from_slice(msg_hash.as_bytes()).expect("Convert to message failed");
         Ok(SECP256K1.sign(&message, &self.private_key))
     }
 
