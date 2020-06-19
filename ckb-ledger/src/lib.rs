@@ -74,48 +74,57 @@ impl LedgerKeyStore {
     }
 
     fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
-        self.discovered_devices.clear();
-        // We need to check for imported accounts first
-        self.refresh_dir()?;
-        // TODO fix ledger library so can put in all ledgers
-        if let Ok(raw_ledger_app) = RawLedgerApp::new() {
-            let command = apdu::get_wallet_id();
-            let response = raw_ledger_app.exchange(command)?;
-            debug!("Nervos CKB Ledger app wallet id: {:02x?}", response);
+        // HACK: since we only support one ledger device
+        // Dont scan again if we already have the device known.
+        // This is needed to avoid creating a new RawLedgerApp
+        // as it does not support multiple objects.
+        let has_ledger_device_account = self.imported_accounts.values().any(|cap| cap.ledger_app.is_some());
 
-            let mut resp = &response.data[..];
-            // TODO: The ledger app gives us 64 bytes but we only use 32
-            // bytes. We should either limit how many the ledger app
-            // gives, or take all 64 bytes here.
-            let raw_wallet_id = parse::split_off_at(&mut resp, 32)?;
-            let _ = parse::split_off_at(&mut resp, 32)?;
-            parse::assert_nothing_left(resp)?;
+        if !has_ledger_device_account {
+            self.discovered_devices.clear();
+            // We need to check for imported accounts first
+            self.refresh_dir()?;
+            // TODO fix ledger library so can put in all ledgers
+            if let Ok(raw_ledger_app) = RawLedgerApp::new() {
+                let command = apdu::get_wallet_id();
+                let response = raw_ledger_app.exchange(command)?;
+                debug!("Nervos CKB Ledger app wallet id: {:02x?}", response);
 
-            let ledger_id = LedgerId(H256::from_slice(raw_wallet_id).unwrap());
-            let maybe_cap = self.imported_accounts.values()
-                .find(|cap| cap.account.ledger_id.clone() == ledger_id);
-            match maybe_cap{
-                Some (cap) => {
-                    let account = cap.account.clone();
-                    self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
-                        account: account,
-                        ledger_app: Some (Arc::new(raw_ledger_app)),
-                    });
-                    ()
-                },
-                _ => {
-                    self.discovered_devices
-                        .insert(ledger_id.clone(), Arc::new(raw_ledger_app));
-                    ()
-                },
-            };
+                let mut resp = &response.data[..];
+                // TODO: The ledger app gives us 64 bytes but we only use 32
+                // bytes. We should either limit how many the ledger app
+                // gives, or take all 64 bytes here.
+                let raw_wallet_id = parse::split_off_at(&mut resp, 32)?;
+                let _ = parse::split_off_at(&mut resp, 32)?;
+                parse::assert_nothing_left(resp)?;
 
+                let ledger_id = LedgerId(H256::from_slice(raw_wallet_id).unwrap());
+                let maybe_cap = self.imported_accounts.values()
+                    .find(|cap| cap.account.ledger_id.clone() == ledger_id);
+                match maybe_cap{
+                    Some (cap) => {
+                        if cap.ledger_app.is_none() {
+                            let account = cap.account.clone();
+                            self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
+                                account: account,
+                                ledger_app: Some (Arc::new(raw_ledger_app)),
+                            });
+                        } // else dont do anything
+                        ()
+                    },
+                    _ => {
+                        self.discovered_devices
+                            .insert(ledger_id.clone(), Arc::new(raw_ledger_app));
+                        ()
+                    },
+                };
+
+            }
         }
         Ok(())
     }
 
     fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
-        let mut imported_accounts = HashMap::default();
         for entry in fs::read_dir(&self.data_dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -124,10 +133,15 @@ impl LedgerKeyStore {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents)?;
                 let account = ledger_imported_account_from_json(&contents)?;
-                imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {account, ledger_app: None });
+                match self.imported_accounts.get(&account.lock_arg) {
+                    Some (_) => (),
+                    None => {
+                        self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {account, ledger_app: None });
+                        ()
+                    },
+                }
             }
         }
-        self.imported_accounts = imported_accounts;
         Ok(())
     }
 
