@@ -6,7 +6,7 @@ use std::time::Duration;
 use ckb_ledger::{LedgerId, LedgerKeyStore};
 use ckb_sdk::{
     wallet::{
-        AbstractKeyStore, AbstractMasterPrivKey, DerivationPath, Key, KeyStore, MasterPrivKey,
+        AbstractKeyStore, AbstractPrivKey, AbstractMasterPrivKey, DerivationPath, Key, KeyStore, MasterPrivKey,
     },
     Address, AddressPayload, NetworkType,
 };
@@ -414,16 +414,19 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
                 let path: DerivationPath = DerivationPathParser.from_matches(m, "path")?;
 
-                let extended_pubkey = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
-                    account.extended_pubkey(path.as_ref())
-                        .map_err(|err| err.to_string())?
+                let pubkey = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
+                    let key = account.extended_privkey(path.as_ref())
+                        .map_err(|err| err.to_string())?;
+                    // Prompt user to provide public_key, even if possible to derive it via stored extended_pubkey.
+                    key.public_key_prompt().unwrap()
                 } else {
                     let password = read_password(false, None)?;
-                    self.key_store
+                    let epk = self.key_store
                         .extended_pubkey_with_password(&lock_arg, path.as_ref(), password.as_bytes())
-                        .map_err(|err| err.to_string())?
+                        .map_err(|err| err.to_string())?;
+                    epk.public_key
                 };
-                let address_payload = AddressPayload::from_pubkey(&extended_pubkey.public_key);
+                let address_payload = AddressPayload::from_pubkey(&pubkey);
                 let resp = address_resp(&address_payload);
                 Ok(resp.render(format, color))
             }
