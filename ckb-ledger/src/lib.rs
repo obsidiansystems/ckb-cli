@@ -321,6 +321,17 @@ impl LedgerMasterCap {
             chain_code,
         })
     }
+
+    pub fn sign_message(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
+        let message_vec : Vec<u8> = message.iter().cloned().collect();
+        let command = apdu::sign_message(message_vec);
+        println!("{:02x?}", command);
+        let ledger_app = self.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.account.ledger_id.clone() })?;
+        let response = ledger_app.exchange(command)?;
+        println!("{:02x?}", response);
+        return Err(LedgerKeyStoreError::LedgerNotFound { id: self.account.ledger_id.clone() });
+
+    }
 }
 
 const WRITE_ERR_MSG: &'static str = "IO error not possible when writing to Vec last I checked";
@@ -400,7 +411,17 @@ impl AbstractPrivKey for LedgerCap {
     }
 
     fn sign(&self, _message: &[u8]) -> Result<Signature, Self::Err> {
-        unimplemented!("Need to generalize method to not take hash")
+         unimplemented!("Need to generalize method to not take hash")
+        
+        // let command = apdu::sign_message(Vec::from_slice(message));
+        // let command = apdu::get_wallet_id();
+        // let ledger_app = self.master.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
+        // let response = ledger_app.exchange(command)?;
+        // debug!(
+        //     "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
+        //     &response, &self.path
+        // );
+        // return Err(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() });
         // let signature = self.sign_recoverable(message)?;
         // Ok(RecoverableSignature::to_standard(&signature))
     }

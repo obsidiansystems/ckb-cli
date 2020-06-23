@@ -573,9 +573,9 @@ fn sign_message(
         }
         Either::Right((account, Either::Right(ledger_keystore))) => {
             let key = ledger_keystore.borrow_account(&account)
-                .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
+                // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
-            key.sign(message)
+            key.sign_message(message)
                .map_err(|err| err.to_string())
                .map(|sig| sig.serialize_compact().to_vec() )
         }
