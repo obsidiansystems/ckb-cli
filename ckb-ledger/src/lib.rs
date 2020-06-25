@@ -56,6 +56,7 @@ pub struct LedgerKeyStore {
 struct LedgerImportedAccount {
     ledger_id: LedgerId,
     lock_arg: H160,
+    pub_key_root: PublicKey,
     ext_pub_key_external: ExtendedPubKey,
     ext_pub_key_change: ExtendedPubKey,
 }
@@ -173,7 +174,7 @@ impl LedgerKeyStore {
         );
         let mut resp = &response.data[..];
 
-        let root_public_key = {
+        let pub_key_root = {
             let len = parse::split_first(&mut resp)? as usize;
             let raw_public_key = parse::split_off_at(&mut resp, len)?;
             PublicKey::from_slice(&raw_public_key)?
@@ -200,10 +201,11 @@ impl LedgerKeyStore {
 
         let LedgerId (ledger_id) = account_id;
         let filepath = self.data_dir.join(ledger_id.to_string());
-        let lock_arg = ckb_sdk::wallet::hash_public_key(&root_public_key);
+        let lock_arg = ckb_sdk::wallet::hash_public_key(&pub_key_root);
         let account = LedgerImportedAccount {
             ledger_id: account_id.clone(),
             lock_arg: lock_arg.clone(),
+            pub_key_root,
             ext_pub_key_external,
             ext_pub_key_change,
         };
@@ -480,29 +482,34 @@ impl AbstractPrivKey for LedgerCap {
 
     // Tries to derive from extended_pubkey if possible
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
-        let my_path_v: Vec<ChildNumber> = self.path.clone().into();
+        let account_root_path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
+        if self.path == account_root_path {
+            Ok (self.master.account.pub_key_root)
+        } else {
+            let my_path_v: Vec<ChildNumber> = self.path.clone().into();
 
-        // TODO: store account_id and get rid of hardcoded account here
-        let account_root_v: Vec<ChildNumber> = DerivationPath::from_str("m/44'/309'/0'").unwrap().into();
-        let same_account = account_root_v.iter().zip(my_path_v.iter())
-            .all(|(c1, c2)| c1 == c2);
+            // TODO: store account_id and get rid of hardcoded account here
+            let account_root_v: Vec<ChildNumber> = account_root_path.into();
+            let same_account = account_root_v.iter().zip(my_path_v.iter())
+                .all(|(c1, c2)| c1 == c2);
 
-        let maybe_chain_index = if same_account && my_path_v.len() == 5 {
-            (if my_path_v[3] == ChildNumber::from(0) {
-                Some (KeyChain::External)
-            } else if my_path_v[3] == ChildNumber::from(1) {
-                Some (KeyChain::Change)
+            let maybe_chain_index = if same_account && my_path_v.len() == 5 {
+                (if my_path_v[3] == ChildNumber::from(0) {
+                    Some (KeyChain::External)
+                } else if my_path_v[3] == ChildNumber::from(1) {
+                    Some (KeyChain::Change)
+                } else {
+                    None
+                }).map (|c| {
+                    (c, my_path_v[4])
+                })
             } else {
                 None
-            }).map (|c| {
-                (c, my_path_v[4])
-            })
-        } else {
-            None
-        };
-        match maybe_chain_index {
-            Some ((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
-            None => self.public_key_prompt()
+            };
+            match maybe_chain_index {
+                Some ((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
+                None => self.public_key_prompt()
+            }
         }
     }
 
@@ -633,6 +640,7 @@ impl AbstractPrivKey for LedgerCap {
 struct LedgerAccountJson {
     ledger_id: H256,
     lock_arg: H160,
+    public_key_root: String,
     extended_public_key_external: LedgerAccountExtendedPubKeyJson,
     extended_public_key_change: LedgerAccountExtendedPubKeyJson,
 }
@@ -646,6 +654,7 @@ struct LedgerAccountExtendedPubKeyJson {
 fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serde_json::Value, serde_json::error::Error> {
     let LedgerId (ledger_id) = inp.ledger_id.clone();
     let lock_arg = inp.lock_arg.clone();
+    let public_key_root = inp.pub_key_root.to_string();
     let extended_public_key_external = LedgerAccountExtendedPubKeyJson {
         address: inp.ext_pub_key_external.public_key.to_string(),
         chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_external.chain_code),
@@ -657,6 +666,7 @@ fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serd
     serde_json::to_value(LedgerAccountJson {
         ledger_id,
         lock_arg,
+        public_key_root,
         extended_public_key_external,
         extended_public_key_change,
     })
@@ -671,11 +681,13 @@ fn ledger_imported_account_from_json ( inp: &String) -> Result<LedgerImportedAcc
         Ok(to_ext_pub_key (pub_key, chain_code, is_change))
     };
 
+    let pub_key_root = PublicKey::from_str(&acc.public_key_root)?;
     let ext_pub_key_external = get_ext_pub_key(&acc.extended_public_key_external, false)?;
     let ext_pub_key_change = get_ext_pub_key(&acc.extended_public_key_change, true)?;
     Ok(LedgerImportedAccount {
         ledger_id : LedgerId (acc.ledger_id),
         lock_arg: acc.lock_arg,
+        pub_key_root,
         ext_pub_key_external,
         ext_pub_key_change,
     })
