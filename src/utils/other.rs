@@ -4,6 +4,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::str::FromStr;
 
 use clap::ArgMatches;
 use colored::Colorize;
@@ -397,7 +398,8 @@ pub fn make_address_payload_and_master_key_cap<'a>(
     ledger_key_store: &'a mut LedgerKeyStore,
 ) -> Result<
     (
-        Option<AddressPayload>,
+        AddressPayload,
+        DerivationPath,
         Option<FullyBoxedAbstractMasterPrivkey<'static>>,
     ),
     String,
@@ -406,7 +408,8 @@ pub fn make_address_payload_and_master_key_cap<'a>(
         Either::Left(ref from_privkey) => {
             let from_pubkey = secp256k1::PublicKey::from_secret_key(&SECP256K1, from_privkey);
             (
-                Some(AddressPayload::from_pubkey(&from_pubkey)),
+                AddressPayload::from_pubkey(&from_pubkey),
+                DerivationPath::empty(),
                 None,
                 //Some(Box::new(KeyAdapter(PrivkeyWrapper(from_pubkey.clone())))),
             )
@@ -414,13 +417,15 @@ pub fn make_address_payload_and_master_key_cap<'a>(
         Either::Right(ref hash160) => {
             if let Ok (account) = ledger_key_store.borrow_account(hash160) {
                 (
-                    None,
+                    AddressPayload::from_pubkey_hash(hash160.clone()),
+                    DerivationPath::from_str("m/44'/309'/0'").unwrap(),
                     Some(Box::new(KeyAdapter(account.clone())))
                 )
             } else {
                 let password = read_password(false, None)?;
                 (
-                    Some(AddressPayload::from_pubkey_hash(hash160.clone())),
+                    AddressPayload::from_pubkey_hash(hash160.clone()),
+                    DerivationPath::empty(),
                     Some(Box::new(KeyAdapter(
                         key_store
                             .get_key(&hash160, password.as_bytes())
