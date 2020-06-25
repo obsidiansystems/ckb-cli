@@ -301,6 +301,10 @@ impl LedgerMasterCap {
         }
     }
 
+    pub fn get_root_pubkey(&self) -> PublicKey {
+        return self.account.pub_key_root;
+    }
+
     pub fn get_extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
         if !is_valid_derivation_path(path.as_ref()) {
             return Err(LedgerKeyStoreError::InvalidDerivationPath {
@@ -385,6 +389,7 @@ impl LedgerMasterCap {
         let recovery_id = RecoveryId::from_i32(parse::split_first(&mut resp)? as i32)?;
         parse::assert_nothing_left(resp)?;
         let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
+        // Convert to non-recoverable
         return Ok(rec_sig.to_standard());
     }
 }

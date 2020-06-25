@@ -308,7 +308,6 @@ message = "0x"
                 let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
                 let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
 
-                //TODO: Handle case when BOTH exist
                 let to_sign : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
@@ -318,19 +317,21 @@ message = "0x"
                 };
                 let msg_with_magic = [magic_bytes, &to_sign].concat();
 
-                let recoverable = m.is_present("recoverable");
+                let mut recoverable = m.is_present("recoverable");
                 let from_account = privkey_or_from_account(m)?;
                 let priv_or_acc_with_kstore: 
                       Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)> =
                       match from_account {
-                            Left(pkey) => { Left(pkey) }
-                            Right(lock_arg) => {
-                                if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
-                                    Right((lock_arg, Right(self.ledger_key_store)))
-                                } else {
-                                    Right((lock_arg, Left(self.key_store)))
-                                }
+                        Left(pkey) => { Left(pkey) }
+                        Right(lock_arg) => {
+                            if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
+                                // Ledger signatures are always non-recoverable for now
+                                recoverable = false;
+                                Right((lock_arg, Right(self.ledger_key_store)))
+                            } else {
+                                Right((lock_arg, Left(self.key_store)))
                             }
+                        }
                 };
                 let signature = sign_message(
                     priv_or_acc_with_kstore,
@@ -350,7 +351,6 @@ message = "0x"
                 let magic_string = String::from("Nervos Message:");
                 let magic_bytes = magic_string.as_bytes();
 
-                //TODO: Handle case when BOTH exist
                 let to_verify : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
@@ -384,11 +384,17 @@ message = "0x"
                 } else if let Some(privkey) = from_privkey_opt {
                     secp256k1::PublicKey::from_secret_key(&SECP256K1, &privkey)
                 } else if let Some(account) = from_account_opt {
-                    let password = read_password(false, None)?;
-                    self.key_store
-                        .extended_pubkey_with_password(&account, &[], password.as_bytes())
-                        .map_err(|err| err.to_string())?
-                        .public_key
+                    let is_ledger_account = self.ledger_key_store.borrow_account(&account).is_ok();
+                    if is_ledger_account {
+                        let key = self.ledger_key_store.borrow_account(&account).map_err(|err| err.to_string())?;
+                        key.get_root_pubkey()
+                    } else {
+                        let password = read_password(false, None)?;
+                        self.key_store
+                            .extended_pubkey_with_password(&account, &[], password.as_bytes())
+                            .map_err(|err| err.to_string())?
+                            .public_key
+                    }
                 } else {
                     return Err(String::from(
                         "Missing <pubkey> or <privkey-path> or <from-account> argument",
