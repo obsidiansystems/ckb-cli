@@ -154,17 +154,15 @@ impl<'a> WalletSubCommand<'a> {
     ) -> Result<String, String> {
         let from_account = privkey_or_from_account(m)?;
 
-        let (from_address_payload_opt, master_key_cap_opt) =
+        let (from_address_payload, from_address_path, master_key_cap_opt) =
             make_address_payload_and_master_key_cap(
                 &from_account,
                 self.key_store,
                 self.ledger_key_store,
             )?;
-        let from_address_info_opt: Option<(AddressPayload, H160)> =
-            from_address_payload_opt.map(|payload| {
-                let hash160 = H160::from_slice(payload.args().as_ref()).unwrap();
-                (payload, hash160)
-            });
+        let from_address_payload_hash = H160::from_slice(from_address_payload.args().as_ref()).unwrap();
+        let from_address_info: (AddressPayload, DerivationPath, H160) =
+            (from_address_payload.clone(), from_address_path.clone(), from_address_payload_hash);
 
         let network_type = get_network_type(self.rpc_client)?;
 
@@ -204,18 +202,17 @@ impl<'a> WalletSubCommand<'a> {
         let mut lock_hashes = Vec::new();
         let mut path_map: HashMap<H160, DerivationPath> = Default::default();
 
-        if let Some((ref underived_payload, ref underived_hash)) = from_address_info_opt {
+        {
+            let (ref underived_payload, ref underived_payload_path, ref underived_hash) = from_address_info;
             // Remember underived keypair's script hash
             lock_hashes.push(Script::from(underived_payload).calc_script_hash());
             // Remember underived pub key hash
-            path_map.insert(underived_hash.clone(), DerivationPath::empty());
+            path_map.insert(underived_hash.clone(), underived_payload_path.clone());
         }
 
         let last_change_address_opt: Option<Address> = AddressParser::default()
             .set_network(network_type)
             .from_matches_opt(m, "derive-change-address", false)?;
-
-        let my_path = DerivationPath::empty();
 
         let (change_address_payload, change_path) =
             if let Some(last_change_address) = last_change_address_opt {
@@ -251,12 +248,8 @@ impl<'a> WalletSubCommand<'a> {
                         "should have already errored out if we didn't find the last change address",
                     ),
                 )
-            } else if let Some((ref from_address_payload, _)) = from_address_info_opt {
-                (from_address_payload.clone(), &my_path)
             } else {
-                return Err(
-                    "Need to pass --derive-change-address when using hardware wallet".to_string(),
-                );
+                (from_address_payload.clone(), &from_address_path)
             };
 
         let multisig_config_opt =
@@ -296,7 +289,7 @@ impl<'a> WalletSubCommand<'a> {
             false
         };
 
-        let payload_opt = from_address_info_opt.map(|(x, _y)| x);
+        let payload_opt = (|(x, _, _y)| Some (x)) (from_address_info);
         if let Either::Left(from_privkey) = from_account {
             let signer = get_privkey_signer(from_privkey)?;
             self.transfer_impl(
