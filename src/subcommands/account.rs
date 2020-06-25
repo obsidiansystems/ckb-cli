@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::str::FromStr;
 
 use ckb_ledger::{LedgerId, LedgerKeyStore};
 use ckb_sdk::{
@@ -415,7 +416,12 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                 let path: DerivationPath = DerivationPathParser.from_matches(m, "path")?;
 
                 let pubkey = if let Ok (account) = self.ledger_key_store.borrow_account(&lock_arg) {
-                    let key = account.extended_privkey(path.as_ref())
+                    let path_resolved = if path == DerivationPath::empty() {
+                        DerivationPath::from_str("m/44'/309'/0'").unwrap()
+                    } else {
+                        path
+                    };
+                    let key = account.extended_privkey(path_resolved.as_ref())
                         .map_err(|err| err.to_string())?;
                     // Prompt user to provide public_key, even if possible to derive it via stored extended_pubkey.
                     key.public_key_prompt().unwrap()
