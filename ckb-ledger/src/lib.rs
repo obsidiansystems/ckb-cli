@@ -361,7 +361,9 @@ impl LedgerMasterCap {
             let ledger_app = my_self.ledger_app.as_ref()
                 .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
             // Only support account index 0 for now
-            let _ = ledger_app.exchange(apdu::sign_message(SignP1::FIRST.bits, [0].to_vec()));
+            let init_apdu = apdu::sign_message(SignP1::FIRST.bits, [0, 0, 0, 0].to_vec()); //send uint32_t
+            let _ = ledger_app.exchange(init_apdu);
+
 
             let mut base = SignP1::NEXT;
             loop {
