@@ -5,7 +5,7 @@ use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::{AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, KeyStore},
+    wallet::{AbstractKeyStore, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -316,7 +316,6 @@ message = "0x"
                     return Err(String::from("No value to sign"));
                 };
                 let msg_with_magic = [magic_bytes, &to_sign].concat();
-
                 let mut recoverable = m.is_present("recoverable");
                 let from_account = privkey_or_from_account(m)?;
                 let priv_or_acc_with_kstore: 
