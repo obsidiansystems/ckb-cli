@@ -301,6 +301,10 @@ impl LedgerMasterCap {
         }
     }
 
+    pub fn get_root_pubkey(&self) -> PublicKey {
+        return self.account.pub_key_root;
+    }
+
     pub fn get_extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
         if !is_valid_derivation_path(path.as_ref()) {
             return Err(LedgerKeyStoreError::InvalidDerivationPath {
@@ -345,6 +349,50 @@ impl LedgerMasterCap {
             public_key,
             chain_code,
         })
+    }
+
+    pub fn sign_message(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
+        let message_vec : Vec<u8> = message.iter().cloned().collect();
+        let my_self = self.clone();
+        let chunk = |mut message: &[u8]| -> Result<_, LedgerKeyStoreError> {
+            assert!(message.len() > 0, "initial message must be non-empty");
+
+            // Init packet provides only the account index
+            let ledger_app = my_self.ledger_app.as_ref()
+                .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
+            // Only support account index 0 for now
+            let init_apdu = apdu::sign_message(SignP1::FIRST.bits, [0, 0, 0, 0].to_vec()); //send uint32_t
+            let _ = ledger_app.exchange(init_apdu);
+
+
+            let mut base = SignP1::NEXT;
+            loop {
+                let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
+                let chunk = parse::split_off_at(&mut message, length)?;
+                let rest_length = message.len();
+                let p1 = (if rest_length > 0 {
+                        base
+                    } else {
+                        base | SignP1::LAST_MARKER
+                    })
+                    .bits;
+                let command = apdu::sign_message(p1, chunk.to_vec());
+                let response = ledger_app.exchange(command)?;
+                if rest_length == 0 {
+                    return Ok(response);
+                }
+                base = SignP1::NEXT;
+            }
+        };
+        let response = chunk(message_vec.as_slice().as_ref())?;
+        let raw_signature = response.data.clone();
+        let mut resp = &raw_signature[..];
+        let data = parse::split_off_at(&mut resp, 64)?;
+        let recovery_id = RecoveryId::from_i32(parse::split_first(&mut resp)? as i32)?;
+        parse::assert_nothing_left(resp)?;
+        let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
+        // Convert to non-recoverable
+        return Ok(rec_sig.to_standard());
     }
 }
 
@@ -494,10 +542,10 @@ impl AbstractPrivKey for LedgerCap {
         Ok(PublicKey::from_slice(&raw_public_key)?)
     }
 
-    fn sign(&self, _message: &H256) -> Result<Signature, Self::Err> {
-        unimplemented!("Need to generalize method to not take hash")
-        //let signature = self.sign_recoverable(message)?;
-        //Ok(RecoverableSignature::to_standard(&signature))
+    fn sign(&self, _message: &[u8]) -> Result<Signature, Self::Err> {
+         unimplemented!("Need to generalize method to not take hash")
+        // let signature = self.sign_recoverable(message)?;
+        // Ok(RecoverableSignature::to_standard(&signature))
     }
 
     fn begin_sign_recoverable(&self) -> Self::SignerSingleShot {

@@ -224,7 +224,7 @@ impl KeyStore {
         &mut self,
         hash160: &H160,
         path: &[ChildNumber],
-        message: &H256,
+        message: &[u8],
     ) -> Result<secp256k1::Signature, Error> {
         Ok(self
             .borrow_account(hash160)?
@@ -248,7 +248,7 @@ impl KeyStore {
         &self,
         hash160: &H160,
         path: &[ChildNumber],
-        message: &H256,
+        message: &[u8],
         password: &[u8],
     ) -> Result<secp256k1::Signature, Error> {
         let key = self.get_key(hash160, password)?;

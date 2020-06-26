@@ -1,10 +1,11 @@
 use chrono::prelude::*;
-use ckb_crypto::secp::SECP256K1;
+use ckb_crypto::secp::{SECP256K1 };
 use ckb_hash::blake2b_256;
+use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::KeyStore,
+    wallet::{AbstractKeyStore, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -25,11 +26,12 @@ use crate::utils::{
     arg,
     arg_parser::{
         AddressParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
-        PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser,
+        PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser, NullParser
     },
-    other::{get_address, read_password, serialize_signature},
+    other::{get_address, read_password, serialize_signature, privkey_or_from_account},
     printer::{OutputFormat, Printable},
 };
+use either::{ Either, Left, Right };
 
 const FLAG_SINCE_EPOCH_NUMBER: u64 =
     0b010_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
@@ -39,16 +41,19 @@ const BLOCK_PERIOD: u64 = 8 * 1000; // 8 seconds
 pub struct UtilSubCommand<'a> {
     rpc_client: &'a mut HttpRpcClient,
     key_store: &'a mut KeyStore,
+    ledger_key_store: &'a mut LedgerKeyStore,
 }
 
 impl<'a> UtilSubCommand<'a> {
     pub fn new(
         rpc_client: &'a mut HttpRpcClient,
         key_store: &'a mut KeyStore,
+        ledger_key_store: &'a mut LedgerKeyStore,
     ) -> UtilSubCommand<'a> {
         UtilSubCommand {
             rpc_client,
             key_store,
+            ledger_key_store,
         }
     }
 
@@ -70,11 +75,12 @@ impl<'a> UtilSubCommand<'a> {
             .required(true)
             .help("Target address (see: https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0021-ckb-address-format/0021-ckb-address-format.md)");
 
+        let binary_hex_arg_name = "binary-hex";
         let binary_hex_arg = Arg::with_name("binary-hex")
             .long("binary-hex")
             .takes_value(true)
-            .required(true)
             .validator(|input| HexParser.validate(input));
+
         let arg_sighash_address = Arg::with_name("sighash-address")
             .long("sighash-address")
             .required(true)
@@ -90,11 +96,10 @@ impl<'a> UtilSubCommand<'a> {
             .long("recoverable")
             .help("Sign use recoverable signature");
 
+        let arg_message_name = "message";
         let arg_message = Arg::with_name("message")
             .long("message")
-            .takes_value(true)
-            .required(true)
-            .validator(|input| FixedHashParser::<H256>::default().validate(input));
+            .takes_value(true);
 
         SubCommand::with_name(name)
             .about("Utilities")
@@ -107,8 +112,9 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(arg_pubkey.clone().required(false))
                     .arg(arg_address.clone().required(false))
                     .arg(arg::lock_arg().clone()),
-                SubCommand::with_name("sign-data")
-                    .about("Sign data with secp256k1 signature ")
+
+                SubCommand::with_name("sign-message")
+                    .about("Sign message with secp256k1 signature")
                     .arg(arg::privkey_path().required_unless(arg::from_account().b.name))
                     .arg(
                         arg::from_account()
@@ -119,18 +125,17 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(
                         binary_hex_arg
                             .clone()
-                            .help("The data to be signed (blake2b hashed with 'ckb-default-hash' personalization)")
-                    ),
-                SubCommand::with_name("sign-message")
-                    .about("Sign message with secp256k1 signature")
-                    .arg(arg::privkey_path().required_unless(arg::from_account().b.name))
-                    .arg(
-                        arg::from_account()
-                            .required_unless(arg::privkey_path().b.name)
-                            .conflicts_with(arg::privkey_path().b.name),
+                            .help("The data to be signed in hex")
+                            .required_unless(arg_message_name)
+                            .conflicts_with(arg_message_name),
                     )
-                    .arg(arg_recoverable.clone())
-                    .arg(arg_message.clone().help("The message to be signed (32 bytes)")),
+                    .arg(
+                        arg_message
+                            .clone()
+                            .required_unless(binary_hex_arg_name)
+                            .conflicts_with(binary_hex_arg_name)
+                            .help("The message to be signed in string form"),
+                    ),
                 SubCommand::with_name("verify-signature")
                     .about("Verify a compact format signature")
                     .arg(arg::pubkey())
@@ -139,14 +144,27 @@ impl<'a> UtilSubCommand<'a> {
                         arg::from_account()
                             .conflicts_with_all(&[arg::privkey_path().b.name, arg::pubkey().b.name]),
                     )
-                    .arg(arg_message.clone().help("The message to be verify (32 bytes)"))
                     .arg(
                         Arg::with_name("signature")
                             .long("signature")
                             .takes_value(true)
                             .required(true)
                             .validator(|input| HexParser.validate(input))
-                            .help("The compact format signature (support recoverable signature)")
+                            .help("The compact format signature (support recoverable signature)"),
+                    )
+                    .arg(
+                        binary_hex_arg
+                            .clone()
+                            .help("The data to be signed in hex")
+                            .required_unless(arg_message_name)
+                            .conflicts_with(arg_message_name),
+                    )
+                    .arg(
+                        arg_message
+                            .clone()
+                            .required_unless(binary_hex_arg_name)
+                            .conflicts_with(binary_hex_arg_name)
+                            .help("The message to be signed in string form"),
                     ),
                 SubCommand::with_name("eaglesong")
                     .about("Hash binary use eaglesong algorithm")
@@ -284,80 +302,63 @@ message = "0x"
                 });
                 Ok(resp.render(format, color))
             }
-            ("sign-data", Some(m)) => {
-                let binary: Vec<u8> = HexParser.from_matches(m, "binary-hex")?;
-                let recoverable = m.is_present("recoverable");
-                let from_privkey_opt: Option<PrivkeyWrapper> =
-                    PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
-                    .from_matches_opt(m, "from-account", false)
-                    .or_else(|err| {
-                        let result: Result<Option<Address>, String> =
-                            AddressParser::new_sighash().from_matches_opt(m, "from-account", false);
-                        result
-                            .map(|address_opt| {
-                                address_opt.map(|address| {
-                                    H160::from_slice(&address.payload().args()).unwrap()
-                                })
-                            })
-                            .map_err(|_| err)
-                    })?;
-
-                let message = H256::from(blake2b_256(&binary));
-                let key_store_opt = from_account_opt
-                    .as_ref()
-                    .map(|account| (&*self.key_store, account));
-                let signature = sign_message(
-                    from_privkey_opt.as_ref(),
-                    key_store_opt,
-                    recoverable,
-                    &message,
-                )?;
-                let result = serde_json::json!({
-                    "message": format!("{:#x}", message),
-                    "signature": format!("0x{}", hex_string(&signature).unwrap()),
-                    "recoverable": recoverable,
-                });
-                Ok(result.render(format, color))
-            }
             ("sign-message", Some(m)) => {
-                let message: H256 =
-                    FixedHashParser::<H256>::default().from_matches(m, "message")?;
-                let recoverable = m.is_present("recoverable");
-                let from_privkey_opt: Option<PrivkeyWrapper> =
-                    PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
-                    .from_matches_opt(m, "from-account", false)
-                    .or_else(|err| {
-                        let result: Result<Option<Address>, String> =
-                            AddressParser::new_sighash().from_matches_opt(m, "from-account", false);
-                        result
-                            .map(|address_opt| {
-                                address_opt.map(|address| {
-                                    H160::from_slice(&address.payload().args()).unwrap()
-                                })
-                            })
-                            .map_err(|_| err)
-                    })?;
+                let magic_string = String::from("Nervos Message:");
+                let magic_bytes = magic_string.as_bytes();
+                let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
+                let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
 
-                let key_store_opt = from_account_opt
-                    .as_ref()
-                    .map(|account| (&*self.key_store, account));
+                let to_sign : Vec<u8> = if let Some(binary) = binary_opt {
+                    binary
+                } else if let Some(message_str) = message_str_opt {
+                    message_str.as_bytes().to_vec()
+                } else {
+                    return Err(String::from("No value to sign"));
+                };
+                let msg_with_magic = [magic_bytes, &to_sign].concat();
+                let mut recoverable = m.is_present("recoverable");
+                let from_account = privkey_or_from_account(m)?;
+                let priv_or_acc_with_kstore: 
+                      Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)> =
+                      match from_account {
+                        Left(pkey) => { Left(pkey) }
+                        Right(lock_arg) => {
+                            if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
+                                // Ledger signatures are always non-recoverable for now
+                                recoverable = false;
+                                Right((lock_arg, Right(self.ledger_key_store)))
+                            } else {
+                                Right((lock_arg, Left(self.key_store)))
+                            }
+                        }
+                };
                 let signature = sign_message(
-                    from_privkey_opt.as_ref(),
-                    key_store_opt,
+                    priv_or_acc_with_kstore,
                     recoverable,
-                    &message,
+                    &msg_with_magic,
                 )?;
                 let result = serde_json::json!({
+                    "message-hash": format!("{:#x}", H256::from(blake2b_256(&msg_with_magic))),
                     "signature": format!("0x{}", hex_string(&signature).unwrap()),
                     "recoverable": recoverable,
                 });
                 Ok(result.render(format, color))
             }
             ("verify-signature", Some(m)) => {
-                let message: H256 =
-                    FixedHashParser::<H256>::default().from_matches(m, "message")?;
+                let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
+                let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
+                let magic_string = String::from("Nervos Message:");
+                let magic_bytes = magic_string.as_bytes();
+
+                let to_verify : Vec<u8> = if let Some(binary) = binary_opt {
+                    binary
+                } else if let Some(message_str) = message_str_opt {
+                    message_str.as_bytes().to_vec()
+                } else {
+                    return Err(String::from("No value to verify"));
+                };
+                let msg_with_magic = [magic_bytes, &to_verify].concat();
+
                 let signature: Vec<u8> = HexParser.from_matches(m, "signature")?;
                 let pubkey_opt: Option<secp256k1::PublicKey> =
                     PubkeyHexParser.from_matches_opt(m, "pubkey", false)?;
@@ -382,11 +383,17 @@ message = "0x"
                 } else if let Some(privkey) = from_privkey_opt {
                     secp256k1::PublicKey::from_secret_key(&SECP256K1, &privkey)
                 } else if let Some(account) = from_account_opt {
-                    let password = read_password(false, None)?;
-                    self.key_store
-                        .extended_pubkey_with_password(&account, &[], password.as_bytes())
-                        .map_err(|err| err.to_string())?
-                        .public_key
+                    let is_ledger_account = self.ledger_key_store.borrow_account(&account).is_ok();
+                    if is_ledger_account {
+                        let key = self.ledger_key_store.borrow_account(&account).map_err(|err| err.to_string())?;
+                        key.get_root_pubkey()
+                    } else {
+                        let password = read_password(false, None)?;
+                        self.key_store
+                            .extended_pubkey_with_password(&account, &[], password.as_bytes())
+                            .map_err(|err| err.to_string())?
+                            .public_key
+                    }
                 } else {
                     return Err(String::from(
                         "Missing <pubkey> or <privkey-path> or <from-account> argument",
@@ -405,9 +412,10 @@ message = "0x"
                 } else {
                     return Err(format!("Invalid signature length: {}", signature.len()));
                 };
-                let message = secp256k1::Message::from_slice(message.as_bytes())
+
+                let message_hash = secp256k1::Message::from_slice(&(blake2b_256(&msg_with_magic))[..])
                     .expect("Convert to message failed");
-                let verify_ok = SECP256K1.verify(&message, &signature, &pubkey).is_ok();
+                let verify_ok = SECP256K1.verify(&message_hash, &signature, &pubkey).is_ok();
                 let result = serde_json::json!({
                     "pubkey": format!("0x{}", hex_string(&pubkey.serialize()[..]).unwrap()),
                     "recoverable": recoverable,
@@ -537,40 +545,45 @@ message = "0x"
         }
     }
 }
-
 fn sign_message(
-    from_privkey_opt: Option<&PrivkeyWrapper>,
-    from_account_opt: Option<(&KeyStore, &H160)>,
+    key_and_store : Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)>,
     recoverable: bool,
-    message: &H256,
+    message: &[u8],
 ) -> Result<Vec<u8>, String> {
-    match (from_privkey_opt, from_account_opt, recoverable) {
-        (Some(privkey), _, false) => {
-            let message = secp256k1::Message::from_slice(message.as_bytes()).unwrap();
-            Ok(SECP256K1
-                .sign(&message, privkey)
-                .serialize_compact()
-                .to_vec())
+    let hash = H256::from(blake2b_256(message));
+    let hash_bytes = secp256k1::Message::from_slice(hash.as_bytes()).unwrap();
+    match key_and_store {
+        Either::Left(privkey) => {
+            if recoverable {
+                Ok(serialize_signature(&SECP256K1.sign_recoverable(&hash_bytes, &privkey)).to_vec())
+            } else {
+                Ok(SECP256K1
+                    .sign(&hash_bytes, &privkey)
+                    .serialize_compact()
+                    .to_vec())
+            }
         }
-        (Some(privkey), _, true) => {
-            let message = secp256k1::Message::from_slice(message.as_bytes()).unwrap();
-            Ok(serialize_signature(&SECP256K1.sign_recoverable(&message, privkey)).to_vec())
-        }
-        (None, Some((key_store, account)), false) => {
+        Either::Right((account, Either::Left(keystore))) => {
             let password = read_password(false, None)?;
-            key_store
-                .sign_with_password(account, &[], message, password.as_bytes())
-                .map(|sig| sig.serialize_compact().to_vec())
-                .map_err(|err| err.to_string())
+            let res = if recoverable {
+                keystore
+                    .sign_recoverable_with_password(&account, &[], &hash, password.as_bytes())
+                    .map(|sig| serialize_signature(&sig).to_vec())
+            } else {
+                keystore
+                    .sign_with_password(&account, &[], &message, password.as_bytes())
+                    .map(|sig| sig.serialize_compact().to_vec())
+            };
+            res.map_err(|err| err.to_string())
         }
-        (None, Some((key_store, account)), true) => {
-            let password = read_password(false, None)?;
-            key_store
-                .sign_recoverable_with_password(account, &[], message, password.as_bytes())
-                .map(|sig| serialize_signature(&sig).to_vec())
-                .map_err(|err| err.to_string())
+        Either::Right((account, Either::Right(ledger_keystore))) => {
+            let key = ledger_keystore.borrow_account(&account)
+                // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
+                .map_err(|err| err.to_string())?;
+            key.sign_message(message)
+               .map_err(|err| err.to_string())
+               .map(|sig| sig.serialize_compact().to_vec() )
         }
-        _ => Err(String::from("Both privkey and key store is missing")),
     }
 }
 

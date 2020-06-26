@@ -68,3 +68,14 @@ pub fn get_wallet_id() -> ledger::ApduCommand {
         data: Vec::new(),
     }
 }
+
+pub fn sign_message(p1_byte: u8, vec: Vec<u8>) -> ledger::ApduCommand {
+    ApduCommand {
+        cla: 0x80,
+        ins: 0x06,
+        p1: p1_byte,
+        p2: 0x00,
+        length: vec.len() as u8,
+        data: vec,
+    }
+}
