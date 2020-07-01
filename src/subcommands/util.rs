@@ -177,6 +177,9 @@ impl<'a> UtilSubCommand<'a> {
                             .long("prefix-160")
                             .help("Only show prefix 160 bits (Example: calculate lock_arg from pubkey)")
                     ),
+                SubCommand::with_name("decode-txn")
+                    .about("Decode binary to get the txn")
+                    .arg(binary_hex_arg.clone()),
                 SubCommand::with_name("compact-to-difficulty")
                     .about("Convert compact target value to difficulty value")
                     .arg(Arg::with_name("compact-target")
@@ -438,6 +441,11 @@ message = "0x"
                     &hash_data[..]
                 };
                 Ok(format!("0x{}", hex_string(slice).unwrap()))
+            }
+            ("decode-txn", Some(m)) => {
+                let binary: Vec<u8> = HexParser.from_matches(m, "binary-hex")?;
+                let resp = packed::AnnotatedTransaction::from_slice(&binary.as_slice()).map_err(|err| err.to_string())?;
+                Ok(format!("{}", resp))
             }
             ("compact-to-difficulty", Some(m)) => {
                 let compact_target: u32 = FromStrParser::<u32>::default()
