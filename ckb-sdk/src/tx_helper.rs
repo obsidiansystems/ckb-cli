@@ -242,13 +242,14 @@ impl TxHelper {
             .map(|(hash160, config)| (hash160.clone(), config.sighash_lock_args()))
             .collect::<HashMap<_, _>>();
 
-        let witnesses = self.init_witnesses();
+        let init_witnesses = self.init_witnesses();
         let mut signatures: HashMap<Bytes, RecoverableSignature> = Default::default();
         let input_cells: HashMap<(Byte32, Bytes), Vec<usize>> =
             self.input_group(get_live_cell)?;
         let input_transactions = self.input_group_cell_order(get_live_cell)?;
         let make_ledger_info =
-            |mut builder: S::SingleShot| -> Result<_, String> {
+            |inputs: (Vec<_>, S::SingleShot)| -> Result<_, String> {
+                let (witnesses, mut builder) = inputs;
                 let mut inputs = Vec::new();
                 let my_input_transactions = input_transactions.clone();
                 for (transaction, input) in my_input_transactions
@@ -303,7 +304,7 @@ impl TxHelper {
                         .change_path(packed::Bip32::new_builder().set(raw_change_path).build())
                         .input_count(input_count)
                         .raw(raw_tx)
-                        .witnesses(witnesses.clone().pack())
+                        .witnesses(witnesses.pack())
                         .build()
                         .as_slice(),
                 );
@@ -326,12 +327,37 @@ impl TxHelper {
                 // ledger or hardware wallets, no packing both of these into 1
                 // array just to parse them apart.
                 if is_ledger {
-                    signatures.insert(lock_arg, make_ledger_info(builder)?);
+                    let multisig_config_opt = self.multisig_configs.get(&multisig_hash160);
+                    let witnesses_vec = if let Some(multisig_config) = multisig_config_opt {
+                        let init_witness_idx = idxs[0];
+                        let witness_args = if init_witnesses[init_witness_idx].raw_data().is_empty() {
+                            WitnessArgs::default()
+                        } else {
+                            WitnessArgs::from_slice(init_witnesses[init_witness_idx].raw_data().as_ref())
+                                .map_err(|err| err.to_string())?
+                        };
+                        let lock_without_sig = {
+                            let sig_len = (multisig_config.threshold() as usize) * SECP_SIGNATURE_SIZE;
+                            let mut data = multisig_config.to_witness_data();
+                            data.extend_from_slice(vec![0u8; sig_len].as_slice());
+                            data
+                        };
+                        let witnesses = witness_args
+                            .as_builder()
+                            .lock(Some(lock_without_sig).pack())
+                            .build();
+                        let mut witnesses_vec: Vec<packed::Bytes> = Vec::new();
+                        witnesses_vec.push(witnesses.as_bytes().pack());
+                        witnesses_vec
+                    } else {
+                        init_witnesses.clone()
+                    };
+                    signatures.insert(lock_arg, make_ledger_info((witnesses_vec, builder))?);
                 } else {
                     let signature = build_signature(
                         &self.transaction.hash(),
                         &idxs,
-                        &witnesses,
+                        &init_witnesses,
                         self.multisig_configs.get(&multisig_hash160),
                         builder,
                     )?;
