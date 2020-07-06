@@ -149,9 +149,13 @@ impl LedgerKeyStore {
     pub fn discovered_devices<'a>(
         &'a mut self,
     ) -> Result<Box<dyn Iterator<Item = LedgerId>>, LedgerKeyStoreError> {
-        self.refresh()?;
-        let accounts: Vec<_> = self.discovered_devices.keys().cloned().collect();
-        Ok(Box::new(accounts.into_iter()))
+        if let Ok(_) = self.refresh() {
+          let accounts: Vec<_> = self.discovered_devices.keys().cloned().collect();
+          Ok(Box::new(accounts.into_iter()))
+        } else {
+          let accounts: Vec<LedgerId> = Vec::new();
+          Ok(Box::new(accounts.into_iter()))
+        }
     }
 
     pub fn import_account<'a, 'b>(
@@ -229,9 +233,13 @@ impl AbstractKeyStore for LedgerKeyStore {
     type AccountCap = LedgerMasterCap;
 
     fn list_accounts(&mut self) -> Result<Box<dyn Iterator<Item = Self::AccountId>>, Self::Err> {
-        self.refresh()?;
-        let accounts: Vec<_> = self.imported_accounts.keys().cloned().collect();
-        Ok(Box::new(accounts.into_iter()))
+        if let Ok(()) = self.refresh() {
+          let accounts: Vec<_> = self.imported_accounts.keys().cloned().collect();
+          Ok(Box::new(accounts.into_iter()))
+        } else {
+          let accounts = Vec::<_>::new();
+          Ok(Box::new(accounts.into_iter()))
+        }
     }
 
     fn from_dir(dir: PathBuf, _scrypt_type: ScryptType) -> Result<Self, LedgerKeyStoreError> {
