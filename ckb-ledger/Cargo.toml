@@ -18,8 +18,8 @@ ckb-hash = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e
 ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31e3ef407a725d833aef4726c8f5eee" }
 either = "1.5.3"
 failure = "0.1.5"
-# Until branch = "use-log-crate" is upstreamed
-ledger = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "be2d5cbcd877bf396aa94bb285d579884883763e" }
+ledger-apdu = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "e24166b802e562d814f7eddd15b49b79f634a5cf"}
+ledger-transport-hid = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "e24166b802e562d814f7eddd15b49b79f634a5cf"}
 log = "0.4.6"
 secp256k1 = "0.15.0"
 serde = { version = "1.0", features = ["derive"] }

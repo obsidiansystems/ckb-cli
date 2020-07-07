@@ -24,8 +24,8 @@ use ckb_types::{H160, H256};
 use bitcoin_hashes::{hash160, Hash};
 use serde::{Deserialize, Serialize};
 
-use ledger::ApduCommand;
-use ledger::LedgerApp as RawLedgerApp;
+use ledger_apdu::APDUCommand;
+use ledger::TransportNativeHID as RawLedgerApp;
 
 pub mod apdu;
 mod error;
@@ -88,7 +88,7 @@ impl LedgerKeyStore {
             // TODO fix ledger library so can put in all ledgers
             if let Ok(raw_ledger_app) = RawLedgerApp::new() {
                 let command = apdu::get_wallet_id();
-                let response = raw_ledger_app.exchange(command)?;
+                let response = raw_ledger_app.exchange(&command)?;
                 debug!("Nervos CKB Ledger app wallet id: {:02x?}", response);
 
                 let mut resp = &response.data[..];
@@ -170,7 +170,7 @@ impl LedgerKeyStore {
             })?;
         let bip_account_index = 0;
         let command = apdu::do_account_import(bip_account_index);
-        let response = ledger_app.exchange(command)?;
+        let response = ledger_app.exchange(&command)?;
 
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?}",
@@ -328,7 +328,7 @@ impl LedgerMasterCap {
         }
         let command = apdu::get_extended_public_key(data);
         let ledger_app = self.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.account.ledger_id.clone() })?;
-        let response = ledger_app.exchange(command)?;
+        let response = ledger_app.exchange(&command)?;
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
             &response, &path
@@ -370,7 +370,7 @@ impl LedgerMasterCap {
                 .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
             // Only support account index 0 for now
             let init_apdu = apdu::sign_message(SignP1::FIRST.bits, [0, 0, 0, 0].to_vec()); //send uint32_t
-            let _ = ledger_app.exchange(init_apdu);
+            let _ = ledger_app.exchange(&init_apdu);
 
 
             let mut base = SignP1::NEXT;
@@ -385,7 +385,7 @@ impl LedgerMasterCap {
                     })
                     .bits;
                 let command = apdu::sign_message(p1, chunk.to_vec());
-                let response = ledger_app.exchange(command)?;
+                let response = ledger_app.exchange(&command)?;
                 if rest_length == 0 {
                     return Ok(response);
                 }
@@ -538,7 +538,7 @@ impl AbstractPrivKey for LedgerCap {
         }
         let command = apdu::extend_public_key(data);
         let ledger_app = self.master.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
-        let response = ledger_app.exchange(command)?;
+        let response = ledger_app.exchange(&command)?;
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
             &response, &self.path
@@ -610,7 +610,7 @@ impl AbstractPrivKey for LedgerCap {
                     let rest_length = message.len();
                     let ledger_app = my_self.master.ledger_app.as_ref()
                         .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.master.account.ledger_id.clone()})?;
-                    let response = ledger_app.exchange(ApduCommand {
+                    let response = ledger_app.exchange(&APDUCommand {
                         cla: 0x80,
                         ins: 0x03,
                         p1: (if rest_length > 0 {
@@ -620,7 +620,6 @@ impl AbstractPrivKey for LedgerCap {
                         })
                         .bits,
                         p2: 0,
-                        length: chunk.len() as u8,
                         data: chunk.to_vec(),
                     })?;
                     if rest_length == 0 {
