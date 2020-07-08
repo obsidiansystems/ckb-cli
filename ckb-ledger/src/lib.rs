@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use ledger_apdu::APDUCommand;
 use ledger::TransportNativeHID as RawLedgerApp;
+use ledger::get_all_ledgers;
 
 pub mod apdu;
 mod error;
@@ -75,20 +76,15 @@ impl LedgerKeyStore {
     }
 
     fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
-        // HACK: since we only support one ledger device
-        // Dont scan again if we already have the device known.
-        // This is needed to avoid creating a new RawLedgerApp
-        // as it does not support multiple objects.
-        let has_ledger_device_account = self.imported_accounts.values().any(|cap| cap.ledger_app.is_some());
+        self.discovered_devices.clear();
+        // We need to check for imported accounts first
+        self.refresh_dir()?;
 
-        if !has_ledger_device_account {
-            self.discovered_devices.clear();
-            // We need to check for imported accounts first
-            self.refresh_dir()?;
-            // TODO fix ledger library so can put in all ledgers
-            if let Ok(raw_ledger_app) = RawLedgerApp::new() {
+        // get_all_ledgers guarantees that there will be at least one ledger, or else there will be an error
+        if let Ok(devices) = get_all_ledgers() {
+            for device in devices {
                 let command = apdu::get_wallet_id();
-                let response = raw_ledger_app.exchange(&command)?;
+                let response = device.exchange(&command)?;
                 debug!("Nervos CKB Ledger app wallet id: {:02x?}", response);
 
                 let mut resp = &response.data[..];
@@ -108,21 +104,21 @@ impl LedgerKeyStore {
                             let account = cap.account.clone();
                             self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
                                 account: account,
-                                ledger_app: Some (Arc::new(raw_ledger_app)),
+                                ledger_app: Some (Arc::new(device)),
                             });
                         } // else dont do anything
                         ()
                     },
                     _ => {
                         self.discovered_devices
-                            .insert(ledger_id.clone(), Arc::new(raw_ledger_app));
+                            .insert(ledger_id.clone(), Arc::new(device));
                         ()
                     },
                 };
 
             }
         }
-        Ok(())
+    Ok(())
     }
 
     fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
