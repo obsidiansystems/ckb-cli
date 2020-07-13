@@ -319,7 +319,7 @@ message = "0x"
                     return Err(String::from("No value to sign"));
                 };
                 let msg_with_magic = [magic_bytes, &to_sign].concat();
-                let mut recoverable = m.is_present("recoverable");
+                let recoverable = m.is_present("recoverable");
                 let from_account = privkey_or_from_account(m)?;
                 let priv_or_acc_with_kstore: 
                       Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)> =
@@ -327,8 +327,6 @@ message = "0x"
                         Left(pkey) => { Left(pkey) }
                         Right(lock_arg) => {
                             if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
-                                // Ledger signatures are always non-recoverable for now
-                                recoverable = false;
                                 Right((lock_arg, Right(self.ledger_key_store)))
                             } else {
                                 Right((lock_arg, Left(self.key_store)))
@@ -588,9 +586,15 @@ fn sign_message(
             let key = ledger_keystore.borrow_account(&account)
                 // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
-            key.sign_message(message)
-               .map_err(|err| err.to_string())
-               .map(|sig| sig.serialize_compact().to_vec() )
+            if recoverable {
+                key.sign_message_recoverable(message)
+                    .map_err(|err| err.to_string())
+                    .map(|sig| serialize_signature(&sig).to_vec())
+            } else {
+                key.sign_message(message)
+                    .map_err(|err| err.to_string())
+                    .map(|sig| sig.serialize_compact().to_vec() )
+            }
         }
     }
 }

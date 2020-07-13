@@ -382,7 +382,15 @@ impl LedgerMasterCap {
         })
     }
 
+    pub fn sign_message_recoverable(&self, message: &[u8]) -> Result<RecoverableSignature, LedgerKeyStoreError> {
+        return self.sign_message_impl(message);
+    }
+
     pub fn sign_message(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
+        return self.sign_message_impl(message).map(| rec_sig | rec_sig.to_standard());
+    }
+
+    fn sign_message_impl(&self, message: &[u8]) -> Result<RecoverableSignature, LedgerKeyStoreError> {
         let message_vec : Vec<u8> = message.iter().cloned().collect();
         let my_self = self.clone();
         let chunk = |mut message: &[u8]| -> Result<_, LedgerKeyStoreError> {
@@ -422,8 +430,9 @@ impl LedgerMasterCap {
         let recovery_id = RecoveryId::from_i32(parse::split_first(&mut resp)? as i32)?;
         parse::assert_nothing_left(resp)?;
         let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
+        return Ok(rec_sig);
         // Convert to non-recoverable
-        return Ok(rec_sig.to_standard());
+        // return Ok(rec_sig.to_standard());
     }
 }
 
