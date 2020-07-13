@@ -439,8 +439,6 @@ impl LedgerMasterCap {
         parse::assert_nothing_left(resp)?;
         let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
         return Ok(rec_sig);
-        // Convert to non-recoverable
-        // return Ok(rec_sig.to_standard());
     }
 }
 
