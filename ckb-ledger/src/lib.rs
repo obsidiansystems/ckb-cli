@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{ HashMap, HashSet };
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use ledger_apdu::APDUCommand;
 use ledger::TransportNativeHID as RawLedgerApp;
+use ledger::{ get_all_ledgers, heartbeat };
 
 pub mod apdu;
 mod error;
@@ -50,6 +51,7 @@ pub struct LedgerKeyStore {
     data_dir: PathBuf, // For storing extended public keys, never stores any private key
     discovered_devices: HashMap<LedgerId, Arc<RawLedgerApp>>,
     imported_accounts: HashMap<H160, LedgerMasterCap>,
+    paths : HashSet<String> // All the HID_Paths of every device we have a mutex for
 }
 
 #[derive(Clone)]
@@ -69,24 +71,44 @@ impl LedgerKeyStore {
             data_dir: dir.clone(),
             discovered_devices: HashMap::new(),
             imported_accounts: HashMap::new(),
+            paths: HashSet::new(),
         }
     }
 
-    fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
-        // HACK: since we only support one ledger device
-        // Dont scan again if we already have the device known.
-        // This is needed to avoid creating a new RawLedgerApp
-        // as it does not support multiple objects.
-        let has_ledger_device_account = self.imported_accounts.values().any(|cap| cap.ledger_app.is_some());
+    fn clear_discovered_devices(&mut self) -> () {
+        let mut paths_to_remove = Vec::new();
+        for i in self.discovered_devices.values() {
+           paths_to_remove.push(i.hid_path()); 
+        }
+        for i in paths_to_remove {
+            let _ = self.paths.remove(&i);
+        }
+        self.discovered_devices.clear();
+    }
 
-        if !has_ledger_device_account {
-            self.discovered_devices.clear();
-            // We need to check for imported accounts first
-            self.refresh_dir()?;
-            // TODO fix ledger library so can put in all ledgers
-            if let Ok(raw_ledger_app) = RawLedgerApp::new() {
+    fn add_to_discovered(&mut self, ledger_id: LedgerId, device: RawLedgerApp) {
+        self.paths.insert(device.hid_path());
+        self.discovered_devices
+            .insert(ledger_id, Arc::new(device));
+    }
+
+    fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
+        self.clear_discovered_devices();
+
+        // We need to check for imported accounts first
+        self.refresh_dir()?;
+
+        //TODO: Use new heartbeat() function in ledger-rs to keep track of unplugged ledgers
+        // and ledgers that the ckb-cli have "freed"
+        let paths_to_ignore = self.paths.iter().cloned().collect();
+        if let Ok(devices) = get_all_ledgers(paths_to_ignore) {
+            for device in devices {
+                // If we are here, that means that the HID_Device contained within
+                // this device is not in self.discovered or self.imported_devices
+                // If the resource IS held elsewhere, this could potentially cause bugs
+
                 let command = apdu::get_wallet_id();
-                let response = raw_ledger_app.exchange(&command)?;
+                let response = device.exchange(&command)?;
                 debug!("Nervos CKB Ledger app wallet id: {:02x?}", response);
 
                 let mut resp = &response.data[..];
@@ -104,23 +126,29 @@ impl LedgerKeyStore {
                     Some (cap) => {
                         if cap.ledger_app.is_none() {
                             let account = cap.account.clone();
+                            self.paths.insert(device.hid_path());
                             self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
                                 account: account,
-                                ledger_app: Some (Arc::new(raw_ledger_app)),
+                                ledger_app: Some (Arc::new(device)),
                             });
-                        } // else dont do anything
+                        } else {
+                            panic!(
+                                "Two different LedgerAppRaw were created for the same HID_Device. 
+                                This is known to cause buffer-based bugs when reading from that HID_Device. It
+                                could also be that two ledgers with the same WalletId are in use, or that 
+                                one ledger was taken out of a port plugged into a different port");
+                        }
                         ()
                     },
                     _ => {
-                        self.discovered_devices
-                            .insert(ledger_id.clone(), Arc::new(raw_ledger_app));
+                        self.add_to_discovered(ledger_id.clone(), device);
                         ()
                     },
                 };
 
             }
         }
-        Ok(())
+    Ok(())
     }
 
     fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
@@ -166,6 +194,8 @@ impl LedgerKeyStore {
             .ok_or_else(|| LedgerKeyStoreError::LedgerNotFound {
                 id: account_id.clone(),
             })?;
+        let ledger_path = ledger_app.hid_path();
+        self.paths.remove(&ledger_path);
         let bip_account_index = 0;
         let command = apdu::do_account_import(bip_account_index);
         let response = ledger_app.exchange(&command)?;
@@ -207,6 +237,7 @@ impl LedgerKeyStore {
         };
         let json_value = ledger_imported_account_to_json(&account)?;
         self.imported_accounts.insert(lock_arg.clone(), LedgerMasterCap {account, ledger_app: Some (ledger_app)});
+        self.paths.insert(ledger_path);
         fs::File::create(&filepath)
             .and_then(|mut file| file.write_all(json_value.to_string().as_bytes()))
             .map_err(|err| LedgerKeyStoreError::KeyStoreIOError(err))?;
@@ -529,7 +560,8 @@ impl AbstractPrivKey for LedgerCap {
                 .expect(WRITE_ERR_MSG);
         }
         let command = apdu::extend_public_key(data);
-        let ledger_app = self.master.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
+        let ledger_app = self.master.ledger_app.as_ref()
+            .ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
         let response = ledger_app.exchange(&command)?;
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
@@ -538,7 +570,6 @@ impl AbstractPrivKey for LedgerCap {
         let mut resp = &response.data[..];
         let len = parse::split_first(&mut resp)? as usize;
         let raw_public_key = parse::split_off_at(&mut resp, len)?;
-        parse::assert_nothing_left(resp)?;
         Ok(PublicKey::from_slice(&raw_public_key)?)
     }
 
