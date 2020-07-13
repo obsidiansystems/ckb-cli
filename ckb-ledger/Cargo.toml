@@ -19,8 +19,8 @@ ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "c5c935e1a31
 either = "1.5.3"
 failure = "0.1.5"
 
-ledger-apdu = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "4362744526efda82064c9be429fa3d37613057d6"}
-ledger-transport-hid = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "4362744526efda82064c9be429fa3d37613057d6"}
+ledger-apdu = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "b7e27d51f76060f29cd0cc6a995e07b784aa5208"}
+ledger-transport-hid = { git = "https://github.com/obsidiansystems/ledger-rs", rev = "b7e27d51f76060f29cd0cc6a995e07b784aa5208"}
 
 log = "0.4.6"
 secp256k1 = "0.15.0"

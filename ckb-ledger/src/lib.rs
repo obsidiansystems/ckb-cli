@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use ledger_apdu::APDUCommand;
 use ledger::TransportNativeHID as RawLedgerApp;
-use ledger::{ get_all_ledgers, heartbeat };
+use ledger::{ get_all_ledgers };
 
 pub mod apdu;
 mod error;
