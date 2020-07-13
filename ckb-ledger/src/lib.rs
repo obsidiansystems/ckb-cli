@@ -56,9 +56,7 @@ pub struct LedgerKeyStore {
 struct LedgerImportedAccount {
     ledger_id: LedgerId,
     lock_arg: H160,
-    pub_key_root: PublicKey,
-    ext_pub_key_external: ExtendedPubKey,
-    ext_pub_key_change: ExtendedPubKey,
+    ext_pub_key_root: ExtendedPubKey,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
@@ -174,40 +172,34 @@ impl LedgerKeyStore {
         );
         let mut resp = &response.data[..];
 
-        let pub_key_root = {
-            let len = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len)?;
-            PublicKey::from_slice(&raw_public_key)?
-        };
-        let ext_pub_key_external = {
-            let len1 = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
-            let len2 = parse::split_first(&mut resp)? as usize;
-            let chain_code = parse::split_off_at(&mut resp, len2)?;
-            let public_key = PublicKey::from_slice(&raw_public_key)?;
-            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
-            to_ext_pub_key(public_key, chain_code, false)
-        };
-        let ext_pub_key_change = {
-            let len1 = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
-            let len2 = parse::split_first(&mut resp)? as usize;
-            let chain_code = parse::split_off_at(&mut resp, len2)?;
-            let public_key = PublicKey::from_slice(&raw_public_key)?;
-            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
-            to_ext_pub_key(public_key, chain_code, true)
-        };
+        let len1 = parse::split_first(&mut resp)? as usize;
+        let raw_public_key = parse::split_off_at(&mut resp, len1)?;
+        let len2 = parse::split_first(&mut resp)? as usize;
+        let chain_code = parse::split_off_at(&mut resp, len2)?;
         parse::assert_nothing_left(resp)?;
-
+        let public_key = PublicKey::from_slice(&raw_public_key)?;
+        let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
+        let path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
+        let ext_pub_key_root = ExtendedPubKey {
+            depth: path.as_ref().len() as u8,
+            parent_fingerprint: {
+                let mut engine = hash160::Hash::engine();
+                engine
+                    .write_all(b"`parent_fingerprint` currently unused by Nervos.")
+                    .expect("write must ok");
+                Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
+            },
+            child_number: ChildNumber::Hardened { index: 0 },
+            public_key,
+            chain_code,
+        };
         let LedgerId (ledger_id) = account_id;
         let filepath = self.data_dir.join(ledger_id.to_string());
-        let lock_arg = ckb_sdk::wallet::hash_public_key(&pub_key_root);
+        let lock_arg = ckb_sdk::wallet::hash_public_key(&public_key);
         let account = LedgerImportedAccount {
             ledger_id: account_id.clone(),
             lock_arg: lock_arg.clone(),
-            pub_key_root,
-            ext_pub_key_external,
-            ext_pub_key_change,
+            ext_pub_key_root,
         };
         let json_value = ledger_imported_account_to_json(&account)?;
         self.imported_accounts.insert(lock_arg.clone(), LedgerMasterCap {account, ledger_app: Some (ledger_app)});
@@ -267,8 +259,8 @@ impl LedgerMasterCap {
         index: ChildNumber,
     ) -> ExtendedPubKey {
         let epk = match chain {
-            KeyChain::External => self.account.ext_pub_key_external,
-            KeyChain::Change => self.account.ext_pub_key_change,
+            KeyChain::External => self.account.ext_pub_key_root.ckd_pub(&SECP256K1, ChildNumber::Normal { index: 0}).unwrap(),
+            KeyChain::Change => self.account.ext_pub_key_root.ckd_pub(&SECP256K1, ChildNumber::Normal { index: 1}).unwrap()
         };
         epk.ckd_pub(&SECP256K1, index).unwrap()
     }
@@ -302,7 +294,7 @@ impl LedgerMasterCap {
     }
 
     pub fn get_root_pubkey(&self) -> PublicKey {
-        return self.account.pub_key_root;
+        return self.account.ext_pub_key_root.public_key;
     }
 
     pub fn get_extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
@@ -426,7 +418,7 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         for i in 0..external_max_len {
             let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::External as u8, i);
             let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-            let epk = self.account.ext_pub_key_external;
+            let epk = self.account.ext_pub_key_root.ckd_pub(&SECP256K1, ChildNumber::Normal { index: 0}).unwrap();
             let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
             let pubkey = extended_pubkey.public_key;
             let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
@@ -438,7 +430,7 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         for i in 0..change_max_len {
             let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::Change as u8, i);
             let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-            let epk = self.account.ext_pub_key_change;
+            let epk = self.account.ext_pub_key_root.ckd_pub(&SECP256K1, ChildNumber::Normal { index: 1}).unwrap();
             let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
             let pubkey = extended_pubkey.public_key;
             let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
@@ -491,7 +483,7 @@ impl AbstractPrivKey for LedgerCap {
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         let account_root_path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
         if self.path == account_root_path {
-            Ok (self.master.account.pub_key_root)
+            Ok (self.master.account.ext_pub_key_root.public_key)
         } else {
             let my_path_v: Vec<ChildNumber> = self.path.clone().into();
 
@@ -647,9 +639,7 @@ impl AbstractPrivKey for LedgerCap {
 struct LedgerAccountJson {
     ledger_id: H256,
     lock_arg: H160,
-    public_key_root: String,
-    extended_public_key_external: LedgerAccountExtendedPubKeyJson,
-    extended_public_key_change: LedgerAccountExtendedPubKeyJson,
+    extended_public_key_root: LedgerAccountExtendedPubKeyJson,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -661,58 +651,42 @@ struct LedgerAccountExtendedPubKeyJson {
 fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serde_json::Value, serde_json::error::Error> {
     let LedgerId (ledger_id) = inp.ledger_id.clone();
     let lock_arg = inp.lock_arg.clone();
-    let public_key_root = inp.pub_key_root.to_string();
-    let extended_public_key_external = LedgerAccountExtendedPubKeyJson {
-        address: inp.ext_pub_key_external.public_key.to_string(),
-        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_external.chain_code),
-    };
-    let extended_public_key_change = LedgerAccountExtendedPubKeyJson {
-        address: inp.ext_pub_key_change.public_key.to_string(),
-        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_change.chain_code),
+    let extended_public_key_root = LedgerAccountExtendedPubKeyJson {
+        address: inp.ext_pub_key_root.public_key.to_string(),
+        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_root.chain_code),
     };
     serde_json::to_value(LedgerAccountJson {
         ledger_id,
         lock_arg,
-        public_key_root,
-        extended_public_key_external,
-        extended_public_key_change,
+        extended_public_key_root,
     })
 }
 
 fn ledger_imported_account_from_json ( inp: &String) -> Result<LedgerImportedAccount, LedgerKeyStoreError> {
 
     let acc: LedgerAccountJson = serde_json::from_str(inp)?;
-    fn get_ext_pub_key (s: &LedgerAccountExtendedPubKeyJson, is_change: bool) -> Result< ExtendedPubKey, LedgerKeyStoreError> {
-        let pub_key = PublicKey::from_str(&s.address)?;
-        let chain_code = ChainCode(s.chain_code);
-        Ok(to_ext_pub_key (pub_key, chain_code, is_change))
+    let ext_pub_key_root = {
+        let path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
+        let public_key = PublicKey::from_str(&acc.extended_public_key_root.address)?;
+        let chain_code = ChainCode(acc.extended_public_key_root.chain_code);
+        ExtendedPubKey {
+            depth: path.as_ref().len() as u8,
+            parent_fingerprint: {
+                let mut engine = hash160::Hash::engine();
+                engine
+                    .write_all(b"`parent_fingerprint` currently unused by Nervos.")
+                    .expect("write must ok");
+                Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
+            },
+            child_number: ChildNumber::Hardened { index: 0 },
+            public_key,
+            chain_code,
+        }
     };
 
-    let pub_key_root = PublicKey::from_str(&acc.public_key_root)?;
-    let ext_pub_key_external = get_ext_pub_key(&acc.extended_public_key_external, false)?;
-    let ext_pub_key_change = get_ext_pub_key(&acc.extended_public_key_change, true)?;
     Ok(LedgerImportedAccount {
         ledger_id : LedgerId (acc.ledger_id),
         lock_arg: acc.lock_arg,
-        pub_key_root,
-        ext_pub_key_external,
-        ext_pub_key_change,
+        ext_pub_key_root,
     })
-}
-
-fn to_ext_pub_key (public_key: PublicKey, chain_code: ChainCode, is_change: bool) -> ExtendedPubKey {
-    let i = if is_change { 1 } else { 0 };
-    ExtendedPubKey {
-        depth: 4,
-        parent_fingerprint: {
-            let mut engine = hash160::Hash::engine();
-            engine
-                .write_all(b"`parent_fingerprint` currently unused by Nervos.")
-                .expect("write must ok");
-            Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
-        },
-        child_number: ChildNumber::Normal { index: i },
-        public_key,
-        chain_code,
-    }
 }
