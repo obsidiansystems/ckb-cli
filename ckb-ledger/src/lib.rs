@@ -94,41 +94,15 @@ impl LedgerKeyStore {
             .insert(ledger_id, Arc::new(device));
     }
 
-    // Needed for when ledgers are removed, because we cant't tell,
-    fn check_heartbeats(&mut self) -> Result<Vec<String>, LedgerKeyStoreError> {
-        let mut res = Vec::new();
-        let mut cleanup = Vec::new();
-        for p in self.paths.iter().cloned() {
-            let is_beating = heartbeat(p.clone())?;
-            if is_beating {
-               res.push(p);
-            } else {
-                cleanup.push(p);
-            }
-        }
-        // paths to ignore
-        self.paths = res.iter().cloned().collect();
-
-        // TODO: Remove LedgerApps from imported accounts if that path has no heartbeat
-        // for &mut capp in self.imported_accounts.values() {
-        //     if let Some(ledger_app) = capp.ledger_app.as_ref() {
-        //         // let ledger_app = ledger_app.as_ref();
-        //         // remove ledger_apps with no heartbeat
-        //          if self.paths.contains(&ledger_app.hid_path()) {
-        //              capp.ledger_app = None;
-        //          }
-        //     }
-        // }
-        return Ok(res);
-    }
-
     fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
         self.clear_discovered_devices();
 
         // We need to check for imported accounts first
         self.refresh_dir()?;
 
-        let paths_to_ignore = self.check_heartbeats()?;
+        //TODO: Use new heartbeat() function in ledger-rs to keep track of unplugged ledgers
+        // and ledgers that the ckb-cli have "freed"
+        let paths_to_ignore = self.paths.iter().cloned().collect();
         if let Ok(devices) = get_all_ledgers(paths_to_ignore) {
             for device in devices {
                 // If we are here, that means that the HID_Device contained within
