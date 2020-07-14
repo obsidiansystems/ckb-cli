@@ -113,6 +113,19 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(arg_address.clone().required(false))
                     .arg(arg::lock_arg().clone()),
 
+                SubCommand::with_name("ledger-sign-hash")
+                    .about("Sign ledger hash with secp256k1 signature")
+                    .arg(
+                        arg::from_account()
+                    )
+                    // .arg(arg_recoverable.clone())
+                    .arg(
+                        binary_hex_arg
+                            .clone()
+                            .help("The hash to be signed in hex"),
+                    //         .required_unless(arg_message_name)
+                    //         .conflicts_with(arg_message_name),
+                    ),
                 SubCommand::with_name("sign-message")
                     .about("Sign message with secp256k1 signature")
                     .arg(arg::privkey_path().required_unless(arg::from_account().b.name))
@@ -305,6 +318,32 @@ message = "0x"
                 });
                 Ok(resp.render(format, color))
             }
+            ("ledger-sign-hash", Some(m)) => {
+                // let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
+                let binary_opt : Option<Vec<u8>> = HexParser.from_matches_opt(m, "binary-hex", false)?;
+
+                // let mut recoverable = m.is_present("recoverable");
+                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
+                    .from_matches_opt(m, "from-account", false)?;
+                if let (Some(lock_arg), Some(binary)) = (from_account_opt, binary_opt) {
+                    if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
+                        let key = self.ledger_key_store.borrow_account(&lock_arg)
+                            .map_err(|err| err.to_string())?;
+                        let signature = key.sign_message_hash(&binary[..])
+                           .map_err(|err| err.to_string())
+                           .map(|sig| sig.serialize_compact().to_vec() )?;
+
+                        let result = serde_json::json!({
+                            "message-hash": format!("{}", hex_string(&binary).unwrap()),
+                            "signature": format!("0x{}", hex_string(&signature).unwrap()),
+                            // "recoverable": recoverable,
+                        });
+                        return Ok(result.render(format, color))
+                    }
+                }
+                return Err(String::from("Failure"));
+            }
+
             ("sign-message", Some(m)) => {
                 let magic_string = String::from("Nervos Message:");
                 let magic_bytes = magic_string.as_bytes();

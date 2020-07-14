@@ -390,6 +390,32 @@ impl LedgerMasterCap {
         })
     }
 
+    pub fn sign_message_hash(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
+        let my_self = self.clone();
+        assert!(message.len() > 0, "initial message must be non-empty");
+        // Init packet provides only the account index
+        let ledger_app = my_self.ledger_app.as_ref()
+            .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
+ 
+        // Only support account index 0 for now
+        let init_apdu = apdu::sign_message_hash(SignP1::FIRST.bits, [0, 0, 0, 0].to_vec()); //send uint32_t
+        let _ = ledger_app.exchange(&init_apdu);
+        let mut message_clone = message.clone();
+        let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
+        let chunk = parse::split_off_at(&mut message_clone, length)?;
+        let p1 = SignP1::LAST_MARKER.bits;
+        let command = apdu::sign_message_hash(p1, chunk.to_vec());
+        let response = ledger_app.exchange(&command)?;
+        let raw_signature = response.data.clone();
+        let mut resp = &raw_signature[..];
+        let data = parse::split_off_at(&mut resp, 64)?;
+        let recovery_id = RecoveryId::from_i32(parse::split_first(&mut resp)? as i32)?;
+        parse::assert_nothing_left(resp)?;
+        let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
+        // Convert to non-recoverable
+        return Ok(rec_sig.to_standard());
+    }
+
     pub fn sign_message(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
         let message_vec : Vec<u8> = message.iter().cloned().collect();
         let my_self = self.clone();
