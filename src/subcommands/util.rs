@@ -118,13 +118,10 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(
                         arg::from_account()
                     )
-                    // .arg(arg_recoverable.clone())
                     .arg(
                         binary_hex_arg
                             .clone()
                             .help("The hash to be signed in hex"),
-                    //         .required_unless(arg_message_name)
-                    //         .conflicts_with(arg_message_name),
                     ),
                 SubCommand::with_name("sign-message")
                     .about("Sign message with secp256k1 signature")
@@ -319,10 +316,7 @@ message = "0x"
                 Ok(resp.render(format, color))
             }
             ("ledger-sign-hash", Some(m)) => {
-                // let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
                 let binary_opt : Option<Vec<u8>> = HexParser.from_matches_opt(m, "binary-hex", false)?;
-
-                // let mut recoverable = m.is_present("recoverable");
                 let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
                     .from_matches_opt(m, "from-account", false)?;
                 if let (Some(lock_arg), Some(binary)) = (from_account_opt, binary_opt) {
@@ -330,12 +324,18 @@ message = "0x"
                         let key = self.ledger_key_store.borrow_account(&lock_arg)
                             .map_err(|err| err.to_string())?;
                         let signature = key.sign_message_hash(&binary[..])
-                           .map_err(|err| err.to_string())
-                           .map(|sig| sig.serialize_compact().to_vec() )?;
+                           .map_err(|err| err.to_string());
+                        let signature_display = signature.clone().map(|sig| sig.serialize_compact().to_vec() )?;
+
+                        let pubkey = key.get_root_pubkey();
+                        let message_hash = secp256k1::Message::from_slice(&binary[..])
+                            .expect("Convert to message failed");
+                        let verify_ok = SECP256K1.verify(&message_hash, &signature.unwrap(), &pubkey).is_ok();
+                        println!("VERIFY: {}", verify_ok);
 
                         let result = serde_json::json!({
                             "message-hash": format!("{}", hex_string(&binary).unwrap()),
-                            "signature": format!("0x{}", hex_string(&signature).unwrap()),
+                            "signature": format!("0x{}", hex_string(&signature_display).unwrap()),
                             // "recoverable": recoverable,
                         });
                         return Ok(result.render(format, color))
