@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use chrono::prelude::*;
 use ckb_crypto::secp::{SECP256K1 };
 use ckb_hash::blake2b_256;
@@ -5,7 +6,7 @@ use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::{AbstractKeyStore, KeyStore},
+    wallet::{ChildNumber, AbstractKeyStore, DerivationPath, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -25,7 +26,7 @@ use super::CliSubCommand;
 use crate::utils::{
     arg,
     arg_parser::{
-        AddressParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
+        AddressParser, DerivationPathParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
         PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser, NullParser
     },
     other::{get_address, read_password, serialize_signature, privkey_or_from_account},
@@ -122,6 +123,12 @@ impl<'a> UtilSubCommand<'a> {
                         binary_hex_arg
                             .clone()
                             .help("The hash to be signed in hex"),
+                    )
+                    .arg(
+                        Arg::with_name("path")
+                            .long("path")
+                            .takes_value(true)
+                            .help("The address path")
                     ),
                 SubCommand::with_name("sign-message")
                     .about("Sign message with secp256k1 signature")
@@ -317,17 +324,26 @@ message = "0x"
             }
             ("ledger-sign-hash", Some(m)) => {
                 let binary_opt : Option<Vec<u8>> = HexParser.from_matches_opt(m, "binary-hex", false)?;
+
+                let path_opt = Some(DerivationPathParser.from_matches(m, "path")?);
                 let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
                     .from_matches_opt(m, "from-account", false)?;
                 if let (Some(lock_arg), Some(binary)) = (from_account_opt, binary_opt) {
                     if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
-                        let key = self.ledger_key_store.borrow_account(&lock_arg)
+                        let account = self.ledger_key_store.borrow_account(&lock_arg)
                             .map_err(|err| err.to_string())?;
-                        let signature = key.sign_message_hash(&binary[..])
+                        let signature = account.sign_message_hash(&binary[..], path_opt.clone())
                            .map_err(|err| err.to_string());
                         let signature_display = signature.clone().map(|sig| sig.serialize_compact().to_vec() )?;
 
-                        let pubkey = key.get_root_pubkey();
+                        let pubkey = if let Some(ext_path) = path_opt {
+                                let children : Vec<ChildNumber> = ext_path.clone().into_iter().cloned().collect();
+                                let epk = account.get_extended_pubkey(&children[..])
+                                    .map_err(|err| err.to_string())?;
+                                epk.public_key
+                            } else {
+                                account.get_root_pubkey()
+                            };
                         let message_hash = secp256k1::Message::from_slice(&binary[..])
                             .expect("Convert to message failed");
                         let verify_ok = SECP256K1.verify(&message_hash, &signature.unwrap(), &pubkey).is_ok();
