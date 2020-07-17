@@ -1,11 +1,11 @@
-use std::collections::{ HashMap, HashSet };
-use std::fmt::Debug;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::fs;
-use std::io::prelude::{Write, Read};
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+use std::fmt::Debug;
+use std::fs;
+use std::io::prelude::{Read, Write};
+use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use bitflags;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -13,20 +13,21 @@ use either::Either;
 use log::debug;
 use secp256k1::{key::PublicKey, recovery::RecoverableSignature, recovery::RecoveryId, Signature};
 
+use bitcoin_hashes::{hash160, Hash};
 use ckb_crypto::secp::SECP256K1;
 use ckb_hash::blake2b_256;
 use ckb_sdk::wallet::{
-    is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey,
-    ChildNumber, DerivationPath, DerivedKeySet, ScryptType, ExtendedPubKey, ChainCode, Fingerprint, KeyChain, SearchDerivedAddrFailed
+    is_valid_derivation_path, AbstractKeyStore, AbstractMasterPrivKey, AbstractPrivKey, ChainCode,
+    ChildNumber, DerivationPath, DerivedKeySet, ExtendedPubKey, Fingerprint, KeyChain, ScryptType,
+    SearchDerivedAddrFailed,
 };
 use ckb_sdk::SignEntireHelper;
 use ckb_types::{H160, H256};
-use bitcoin_hashes::{hash160, Hash};
 use serde::{Deserialize, Serialize};
 
-use ledger_apdu::APDUCommand;
+use ledger::get_all_ledgers;
 use ledger::TransportNativeHID as RawLedgerApp;
-use ledger::{ get_all_ledgers };
+use ledger_apdu::APDUCommand;
 
 pub mod apdu;
 mod error;
@@ -51,16 +52,14 @@ pub struct LedgerKeyStore {
     data_dir: PathBuf, // For storing extended public keys, never stores any private key
     discovered_devices: HashMap<LedgerId, Arc<RawLedgerApp>>,
     imported_accounts: HashMap<H160, LedgerMasterCap>,
-    paths : HashSet<String> // All the HID_Paths of every device we have a mutex for
+    paths: HashSet<String>, // All the HID_Paths of every device we have a mutex for
 }
 
 #[derive(Clone)]
 struct LedgerImportedAccount {
     ledger_id: LedgerId,
     lock_arg: H160,
-    pub_key_root: PublicKey,
-    ext_pub_key_external: ExtendedPubKey,
-    ext_pub_key_change: ExtendedPubKey,
+    ext_pub_key_root: ExtendedPubKey,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
@@ -80,7 +79,7 @@ impl LedgerKeyStore {
     fn clear_discovered_devices(&mut self) -> () {
         let mut paths_to_remove = Vec::new();
         for i in self.discovered_devices.values() {
-           paths_to_remove.push(i.hid_path()); 
+            paths_to_remove.push(i.hid_path());
         }
         for i in paths_to_remove {
             let _ = self.paths.remove(&i);
@@ -90,8 +89,7 @@ impl LedgerKeyStore {
 
     fn add_to_discovered(&mut self, ledger_id: LedgerId, device: RawLedgerApp) {
         self.paths.insert(device.hid_path());
-        self.discovered_devices
-            .insert(ledger_id, Arc::new(device));
+        self.discovered_devices.insert(ledger_id, Arc::new(device));
     }
 
     fn refresh(&mut self) -> Result<(), LedgerKeyStoreError> {
@@ -122,17 +120,22 @@ impl LedgerKeyStore {
                 parse::assert_nothing_left(resp)?;
 
                 let ledger_id = LedgerId(H256::from_slice(raw_wallet_id).unwrap());
-                let maybe_cap = self.imported_accounts.values()
+                let maybe_cap = self
+                    .imported_accounts
+                    .values()
                     .find(|cap| cap.account.ledger_id.clone() == ledger_id);
-                match maybe_cap{
-                    Some (cap) => {
+                match maybe_cap {
+                    Some(cap) => {
                         if cap.ledger_app.is_none() {
                             let account = cap.account.clone();
                             self.paths.insert(device.hid_path());
-                            self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {
-                                account: account,
-                                ledger_app: Some (Arc::new(device)),
-                            });
+                            self.imported_accounts.insert(
+                                account.lock_arg.clone(),
+                                LedgerMasterCap {
+                                    account: account,
+                                    ledger_app: Some(Arc::new(device)),
+                                },
+                            );
                         } else {
                             panic!(
                                 "Two different LedgerAppRaw were created for the same HID_Device. 
@@ -141,16 +144,15 @@ impl LedgerKeyStore {
                                 one ledger was taken out of a port plugged into a different port");
                         }
                         ()
-                    },
+                    }
                     _ => {
                         self.add_to_discovered(ledger_id.clone(), device);
                         ()
-                    },
+                    }
                 };
-
             }
         }
-    Ok(())
+        Ok(())
     }
 
     fn refresh_dir(&mut self) -> Result<(), LedgerKeyStoreError> {
@@ -163,11 +165,17 @@ impl LedgerKeyStore {
                 file.read_to_string(&mut contents)?;
                 let account = ledger_imported_account_from_json(&contents)?;
                 match self.imported_accounts.get(&account.lock_arg) {
-                    Some (_) => (),
+                    Some(_) => (),
                     None => {
-                        self.imported_accounts.insert(account.lock_arg.clone(), LedgerMasterCap {account, ledger_app: None });
+                        self.imported_accounts.insert(
+                            account.lock_arg.clone(),
+                            LedgerMasterCap {
+                                account,
+                                ledger_app: None,
+                            },
+                        );
                         ()
-                    },
+                    }
                 }
             }
         }
@@ -178,11 +186,11 @@ impl LedgerKeyStore {
         &'a mut self,
     ) -> Result<Box<dyn Iterator<Item = LedgerId>>, LedgerKeyStoreError> {
         if let Ok(_) = self.refresh() {
-          let accounts: Vec<_> = self.discovered_devices.keys().cloned().collect();
-          Ok(Box::new(accounts.into_iter()))
+            let accounts: Vec<_> = self.discovered_devices.keys().cloned().collect();
+            Ok(Box::new(accounts.into_iter()))
         } else {
-          let accounts: Vec<LedgerId> = Vec::new();
-          Ok(Box::new(accounts.into_iter()))
+            let accounts: Vec<LedgerId> = Vec::new();
+            Ok(Box::new(accounts.into_iter()))
         }
     }
 
@@ -191,11 +199,11 @@ impl LedgerKeyStore {
         account_id: &'b LedgerId,
     ) -> Result<H160, LedgerKeyStoreError> {
         self.refresh()?;
-        let ledger_app = self.discovered_devices
-            .remove(account_id)
-            .ok_or_else(|| LedgerKeyStoreError::LedgerNotFound {
+        let ledger_app = self.discovered_devices.remove(account_id).ok_or_else(|| {
+            LedgerKeyStoreError::LedgerNotFound {
                 id: account_id.clone(),
-            })?;
+            }
+        })?;
         let ledger_path = ledger_app.hid_path();
         self.paths.remove(&ledger_path);
         let bip_account_index = 0;
@@ -208,50 +216,49 @@ impl LedgerKeyStore {
         );
         let mut resp = &response.data[..];
 
-        let pub_key_root = {
-            let len = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len)?;
-            PublicKey::from_slice(&raw_public_key)?
-        };
-        let ext_pub_key_external = {
-            let len1 = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
-            let len2 = parse::split_first(&mut resp)? as usize;
-            let chain_code = parse::split_off_at(&mut resp, len2)?;
-            let public_key = PublicKey::from_slice(&raw_public_key)?;
-            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
-            to_ext_pub_key(public_key, chain_code, false)
-        };
-        let ext_pub_key_change = {
-            let len1 = parse::split_first(&mut resp)? as usize;
-            let raw_public_key = parse::split_off_at(&mut resp, len1)?;
-            let len2 = parse::split_first(&mut resp)? as usize;
-            let chain_code = parse::split_off_at(&mut resp, len2)?;
-            let public_key = PublicKey::from_slice(&raw_public_key)?;
-            let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
-            to_ext_pub_key(public_key, chain_code, true)
-        };
+        let len1 = parse::split_first(&mut resp)? as usize;
+        let raw_public_key = parse::split_off_at(&mut resp, len1)?;
+        let len2 = parse::split_first(&mut resp)? as usize;
+        let chain_code = parse::split_off_at(&mut resp, len2)?;
         parse::assert_nothing_left(resp)?;
-
-        let LedgerId (ledger_id) = account_id;
+        let public_key = PublicKey::from_slice(&raw_public_key)?;
+        let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
+        let path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
+        let ext_pub_key_root = ExtendedPubKey {
+            depth: path.as_ref().len() as u8,
+            parent_fingerprint: {
+                let mut engine = hash160::Hash::engine();
+                engine
+                    .write_all(b"`parent_fingerprint` currently unused by Nervos.")
+                    .expect("write must ok");
+                Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
+            },
+            child_number: ChildNumber::Hardened { index: 0 },
+            public_key,
+            chain_code,
+        };
+        let LedgerId(ledger_id) = account_id;
         let filepath = self.data_dir.join(ledger_id.to_string());
-        let lock_arg = ckb_sdk::wallet::hash_public_key(&pub_key_root);
+        let lock_arg = ckb_sdk::wallet::hash_public_key(&public_key);
         let account = LedgerImportedAccount {
             ledger_id: account_id.clone(),
             lock_arg: lock_arg.clone(),
-            pub_key_root,
-            ext_pub_key_external,
-            ext_pub_key_change,
+            ext_pub_key_root,
         };
         let json_value = ledger_imported_account_to_json(&account)?;
-        self.imported_accounts.insert(lock_arg.clone(), LedgerMasterCap {account, ledger_app: Some (ledger_app)});
+        self.imported_accounts.insert(
+            lock_arg.clone(),
+            LedgerMasterCap {
+                account,
+                ledger_app: Some(ledger_app),
+            },
+        );
         self.paths.insert(ledger_path);
         fs::File::create(&filepath)
             .and_then(|mut file| file.write_all(json_value.to_string().as_bytes()))
             .map_err(|err| LedgerKeyStoreError::KeyStoreIOError(err))?;
         Ok(lock_arg)
     }
-
 }
 
 impl AbstractKeyStore for LedgerKeyStore {
@@ -265,11 +272,11 @@ impl AbstractKeyStore for LedgerKeyStore {
 
     fn list_accounts(&mut self) -> Result<Box<dyn Iterator<Item = Self::AccountId>>, Self::Err> {
         if let Ok(()) = self.refresh() {
-          let accounts: Vec<_> = self.imported_accounts.keys().cloned().collect();
-          Ok(Box::new(accounts.into_iter()))
+            let accounts: Vec<_> = self.imported_accounts.keys().cloned().collect();
+            Ok(Box::new(accounts.into_iter()))
         } else {
-          let accounts = Vec::<_>::new();
-          Ok(Box::new(accounts.into_iter()))
+            let accounts = Vec::<_>::new();
+            Ok(Box::new(accounts.into_iter()))
         }
     }
 
@@ -286,7 +293,7 @@ impl AbstractKeyStore for LedgerKeyStore {
         self.refresh()?;
         self.imported_accounts
             .get(lock_arg)
-            .ok_or_else(|| LedgerKeyStoreError::LedgerAccountNotFound (lock_arg.clone()))
+            .ok_or_else(|| LedgerKeyStoreError::LedgerAccountNotFound(lock_arg.clone()))
     }
 }
 
@@ -295,8 +302,7 @@ impl AbstractKeyStore for LedgerKeyStore {
 pub struct LedgerMasterCap {
     account: LedgerImportedAccount,
     // TODO no Arc once we have "generic associated types" and can just borrow the device.
-    ledger_app: Option <Arc<RawLedgerApp>>,
-
+    ledger_app: Option<Arc<RawLedgerApp>>,
 }
 
 impl LedgerMasterCap {
@@ -306,8 +312,16 @@ impl LedgerMasterCap {
         index: ChildNumber,
     ) -> ExtendedPubKey {
         let epk = match chain {
-            KeyChain::External => self.account.ext_pub_key_external,
-            KeyChain::Change => self.account.ext_pub_key_change,
+            KeyChain::External => self
+                .account
+                .ext_pub_key_root
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: 0 })
+                .unwrap(),
+            KeyChain::Change => self
+                .account
+                .ext_pub_key_root
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: 1 })
+                .unwrap(),
         };
         epk.ckd_pub(&SECP256K1, index).unwrap()
     }
@@ -320,12 +334,12 @@ impl LedgerMasterCap {
         change_length: u32,
     ) -> DerivedKeySet {
         let get_pairs = |chain, start, length| {
-
             (0..length)
                 .map(|i| {
                     let path_string = format!("m/44'/309'/0'/{}/{}", chain as u8, i + start);
                     let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-                    let extended_pubkey = self.derive_extended_public_key(chain, ChildNumber::from(i + start));
+                    let extended_pubkey =
+                        self.derive_extended_public_key(chain, ChildNumber::from(i + start));
                     let pubkey = extended_pubkey.public_key;
                     let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
                         .expect("Generate hash(H160) from pubkey failed");
@@ -341,10 +355,13 @@ impl LedgerMasterCap {
     }
 
     pub fn get_root_pubkey(&self) -> PublicKey {
-        return self.account.pub_key_root;
+        return self.account.ext_pub_key_root.public_key;
     }
 
-    pub fn get_extended_pubkey(&self, path: &[ChildNumber]) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
+    pub fn get_extended_pubkey(
+        &self,
+        path: &[ChildNumber],
+    ) -> Result<ExtendedPubKey, LedgerKeyStoreError> {
         if !is_valid_derivation_path(path.as_ref()) {
             return Err(LedgerKeyStoreError::InvalidDerivationPath {
                 path: path.as_ref().iter().cloned().collect(),
@@ -358,7 +375,12 @@ impl LedgerMasterCap {
                 .expect(WRITE_ERR_MSG);
         }
         let command = apdu::get_extended_public_key(data);
-        let ledger_app = self.ledger_app.as_ref().ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.account.ledger_id.clone() })?;
+        let ledger_app = self
+            .ledger_app
+            .as_ref()
+            .ok_or(LedgerKeyStoreError::LedgerNotFound {
+                id: self.account.ledger_id.clone(),
+            })?;
         let response = ledger_app.exchange(&command)?;
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
@@ -372,7 +394,7 @@ impl LedgerMasterCap {
         parse::assert_nothing_left(resp)?;
         let public_key = PublicKey::from_slice(&raw_public_key)?;
         let chain_code = ChainCode(chain_code.try_into().expect("chain_code is not 32 bytes"));
-        Ok (ExtendedPubKey {
+        Ok(ExtendedPubKey {
             depth: path.as_ref().len() as u8,
             parent_fingerprint: {
                 let mut engine = hash160::Hash::engine();
@@ -390,22 +412,33 @@ impl LedgerMasterCap {
         })
     }
 
-    pub fn sign_message_hash(&self, message: &[u8], path_opt: Option<DerivationPath>) -> Result<Signature, LedgerKeyStoreError> {
+    pub fn sign_message_hash(
+        &self,
+        message: &[u8],
+        path_opt: Option<DerivationPath>,
+    ) -> Result<Signature, LedgerKeyStoreError> {
         let my_self = self.clone();
         assert!(message.len() > 0, "initial message must be non-empty");
 
-       let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
-       let mut bip_path = Vec::new();
-        bip_path.write_u8(drv_path.as_ref().len() as u8)
+        let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
+        let mut bip_path = Vec::new();
+        bip_path
+            .write_u8(drv_path.as_ref().len() as u8)
             .expect(WRITE_ERR_MSG);
         for &child_num in drv_path.as_ref().iter() {
-            bip_path.write_u32::<BigEndian>(From::from(child_num))
+            bip_path
+                .write_u32::<BigEndian>(From::from(child_num))
                 .expect(WRITE_ERR_MSG);
         }
         let init_packet = bip_path;
         let init_apdu = apdu::sign_message_hash(SignP1::FIRST.bits, init_packet);
-        let ledger_app = my_self.ledger_app.as_ref()
-            .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
+        let ledger_app =
+            my_self
+                .ledger_app
+                .as_ref()
+                .ok_or(LedgerKeyStoreError::LedgerNotFound {
+                    id: my_self.account.ledger_id.clone(),
+                })?;
         let _ = ledger_app.exchange(&init_apdu);
         let mut message_clone = message.clone();
         let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
@@ -423,26 +456,57 @@ impl LedgerMasterCap {
         return Ok(rec_sig.to_standard());
     }
 
-    pub fn sign_message(&self, message: &[u8], path_opt: Option<DerivationPath>, display_hex: bool) -> Result<Signature, LedgerKeyStoreError> {
-        let message_vec : Vec<u8> = message.iter().cloned().collect();
+    pub fn sign_message_recoverable(
+        &self,
+        message: &[u8],
+        path_opt: Option<DerivationPath>,
+        display_hex: bool,
+    ) -> Result<RecoverableSignature, LedgerKeyStoreError> {
+        return self.sign_message_impl(message, path_opt, display_hex);
+    }
+
+    pub fn sign_message(
+        &self,
+        message: &[u8],
+        path_opt: Option<DerivationPath>,
+        display_hex: bool,
+    ) -> Result<Signature, LedgerKeyStoreError> {
+        return self
+            .sign_message_impl(message, path_opt, display_hex)
+            .map(|rec_sig| rec_sig.to_standard());
+    }
+
+    fn sign_message_impl(
+        &self,
+        message: &[u8],
+        path_opt: Option<DerivationPath>,
+        display_hex: bool,
+    ) -> Result<RecoverableSignature, LedgerKeyStoreError> {
+        let message_vec: Vec<u8> = message.iter().cloned().collect();
         let my_self = self.clone();
         let chunk = |mut message: &[u8]| -> Result<_, LedgerKeyStoreError> {
             assert!(message.len() > 0, "initial message must be non-empty");
 
-           let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
-           let mut init_packet = vec![display_hex as u8];
-            init_packet.write_u8(drv_path.as_ref().len() as u8)
+            let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
+            let mut init_packet = vec![display_hex as u8];
+            init_packet
+                .write_u8(drv_path.as_ref().len() as u8)
                 .expect(WRITE_ERR_MSG);
             for &child_num in drv_path.as_ref().iter() {
-                init_packet.write_u32::<BigEndian>(From::from(child_num))
+                init_packet
+                    .write_u32::<BigEndian>(From::from(child_num))
                     .expect(WRITE_ERR_MSG);
             }
-            let ledger_app = my_self.ledger_app.as_ref()
-                .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
+            let ledger_app =
+                my_self
+                    .ledger_app
+                    .as_ref()
+                    .ok_or(LedgerKeyStoreError::LedgerNotFound {
+                        id: my_self.account.ledger_id.clone(),
+                    })?;
 
             let init_apdu = apdu::sign_message(SignP1::FIRST.bits, init_packet);
             let _ = ledger_app.exchange(&init_apdu);
-
 
             let mut base = SignP1::NEXT;
             loop {
@@ -450,11 +514,11 @@ impl LedgerMasterCap {
                 let chunk = parse::split_off_at(&mut message, length)?;
                 let rest_length = message.len();
                 let p1 = (if rest_length > 0 {
-                        base
-                    } else {
-                        base | SignP1::LAST_MARKER
-                    })
-                    .bits;
+                    base
+                } else {
+                    base | SignP1::LAST_MARKER
+                })
+                .bits;
                 let command = apdu::sign_message(p1, chunk.to_vec());
                 let response = ledger_app.exchange(&command)?;
                 if rest_length == 0 {
@@ -470,8 +534,7 @@ impl LedgerMasterCap {
         let recovery_id = RecoveryId::from_i32(parse::split_first(&mut resp)? as i32)?;
         parse::assert_nothing_left(resp)?;
         let rec_sig = RecoverableSignature::from_compact(data, recovery_id)?;
-        // Convert to non-recoverable
-        return Ok(rec_sig.to_standard());
+        return Ok(rec_sig);
     }
 }
 
@@ -505,8 +568,14 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         for i in 0..external_max_len {
             let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::External as u8, i);
             let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-            let epk = self.account.ext_pub_key_external;
-            let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
+            let epk = self
+                .account
+                .ext_pub_key_root
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: 0 })
+                .unwrap();
+            let extended_pubkey = epk
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: i })
+                .unwrap();
             let pubkey = extended_pubkey.public_key;
             let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
                 .expect("Generate hash(H160) from pubkey failed");
@@ -517,8 +586,14 @@ impl AbstractMasterPrivKey for LedgerMasterCap {
         for i in 0..change_max_len {
             let path_string = format!("m/44'/309'/0'/{}/{}", KeyChain::Change as u8, i);
             let path = DerivationPath::from_str(path_string.as_str()).unwrap();
-            let epk = self.account.ext_pub_key_change;
-            let extended_pubkey = epk.ckd_pub(&SECP256K1, ChildNumber::Normal { index: i}).unwrap();
+            let epk = self
+                .account
+                .ext_pub_key_root
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: 1 })
+                .unwrap();
+            let extended_pubkey = epk
+                .ckd_pub(&SECP256K1, ChildNumber::Normal { index: i })
+                .unwrap();
             let pubkey = extended_pubkey.public_key;
             let hash = H160::from_slice(&blake2b_256(&pubkey.serialize()[..])[0..20])
                 .expect("Generate hash(H160) from pubkey failed");
@@ -570,31 +645,32 @@ impl AbstractPrivKey for LedgerCap {
     fn public_key(&self) -> Result<secp256k1::PublicKey, Self::Err> {
         let account_root_path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
         if self.path == account_root_path {
-            Ok (self.master.account.pub_key_root)
+            Ok(self.master.account.ext_pub_key_root.public_key)
         } else {
             let my_path_v: Vec<ChildNumber> = self.path.clone().into();
 
             // TODO: store account_id and get rid of hardcoded account here
             let account_root_v: Vec<ChildNumber> = account_root_path.into();
-            let same_account = account_root_v.iter().zip(my_path_v.iter())
+            let same_account = account_root_v
+                .iter()
+                .zip(my_path_v.iter())
                 .all(|(c1, c2)| c1 == c2);
 
             let maybe_chain_index = if same_account && my_path_v.len() == 5 {
                 (if my_path_v[3] == ChildNumber::from(0) {
-                    Some (KeyChain::External)
+                    Some(KeyChain::External)
                 } else if my_path_v[3] == ChildNumber::from(1) {
-                    Some (KeyChain::Change)
+                    Some(KeyChain::Change)
                 } else {
                     None
-                }).map (|c| {
-                    (c, my_path_v[4])
                 })
+                .map(|c| (c, my_path_v[4]))
             } else {
                 None
             };
             match maybe_chain_index {
-                Some ((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
-                None => self.public_key_prompt()
+                Some((c, i)) => Ok(self.master.derive_extended_public_key(c, i).public_key),
+                None => self.public_key_prompt(),
             }
         }
     }
@@ -608,8 +684,13 @@ impl AbstractPrivKey for LedgerCap {
                 .expect(WRITE_ERR_MSG);
         }
         let command = apdu::extend_public_key(data);
-        let ledger_app = self.master.ledger_app.as_ref()
-            .ok_or(LedgerKeyStoreError::LedgerNotFound { id: self.master.account.ledger_id.clone() })?;
+        let ledger_app =
+            self.master
+                .ledger_app
+                .as_ref()
+                .ok_or(LedgerKeyStoreError::LedgerNotFound {
+                    id: self.master.account.ledger_id.clone(),
+                })?;
         let response = ledger_app.exchange(&command)?;
         debug!(
             "Nervos CBK Ledger app extended pub key raw public key {:02x?} for path {:?}",
@@ -622,7 +703,7 @@ impl AbstractPrivKey for LedgerCap {
     }
 
     fn sign(&self, _message: &[u8]) -> Result<Signature, Self::Err> {
-         unimplemented!("Need to generalize method to not take hash")
+        unimplemented!("Need to generalize method to not take hash")
         // let signature = self.sign_recoverable(message)?;
         // Ok(RecoverableSignature::to_standard(&signature))
     }
@@ -679,8 +760,11 @@ impl AbstractPrivKey for LedgerCap {
                     let length = ::std::cmp::min(message.len(), MAX_APDU_SIZE);
                     let chunk = parse::split_off_at(&mut message, length)?;
                     let rest_length = message.len();
-                    let ledger_app = my_self.master.ledger_app.as_ref()
-                        .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.master.account.ledger_id.clone()})?;
+                    let ledger_app = my_self.master.ledger_app.as_ref().ok_or(
+                        LedgerKeyStoreError::LedgerNotFound {
+                            id: my_self.master.account.ledger_id.clone(),
+                        },
+                    )?;
                     let response = ledger_app.exchange(&APDUCommand {
                         cla: 0x80,
                         ins: 0x03,
@@ -725,72 +809,57 @@ impl AbstractPrivKey for LedgerCap {
 struct LedgerAccountJson {
     ledger_id: H256,
     lock_arg: H160,
-    public_key_root: String,
-    extended_public_key_external: LedgerAccountExtendedPubKeyJson,
-    extended_public_key_change: LedgerAccountExtendedPubKeyJson,
+    extended_public_key_root: LedgerAccountExtendedPubKeyJson,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LedgerAccountExtendedPubKeyJson {
     address: String,
-    chain_code: [u8;32],
+    chain_code: [u8; 32],
 }
 
-fn ledger_imported_account_to_json ( inp: &LedgerImportedAccount) -> Result<serde_json::Value, serde_json::error::Error> {
-    let LedgerId (ledger_id) = inp.ledger_id.clone();
+fn ledger_imported_account_to_json(
+    inp: &LedgerImportedAccount,
+) -> Result<serde_json::Value, serde_json::error::Error> {
+    let LedgerId(ledger_id) = inp.ledger_id.clone();
     let lock_arg = inp.lock_arg.clone();
-    let public_key_root = inp.pub_key_root.to_string();
-    let extended_public_key_external = LedgerAccountExtendedPubKeyJson {
-        address: inp.ext_pub_key_external.public_key.to_string(),
-        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_external.chain_code),
-    };
-    let extended_public_key_change = LedgerAccountExtendedPubKeyJson {
-        address: inp.ext_pub_key_change.public_key.to_string(),
-        chain_code: (|ChainCode (bytes)| bytes) (inp.ext_pub_key_change.chain_code),
+    let extended_public_key_root = LedgerAccountExtendedPubKeyJson {
+        address: inp.ext_pub_key_root.public_key.to_string(),
+        chain_code: (|ChainCode(bytes)| bytes)(inp.ext_pub_key_root.chain_code),
     };
     serde_json::to_value(LedgerAccountJson {
         ledger_id,
         lock_arg,
-        public_key_root,
-        extended_public_key_external,
-        extended_public_key_change,
+        extended_public_key_root,
     })
 }
 
-fn ledger_imported_account_from_json ( inp: &String) -> Result<LedgerImportedAccount, LedgerKeyStoreError> {
-
+fn ledger_imported_account_from_json(
+    inp: &String,
+) -> Result<LedgerImportedAccount, LedgerKeyStoreError> {
     let acc: LedgerAccountJson = serde_json::from_str(inp)?;
-    fn get_ext_pub_key (s: &LedgerAccountExtendedPubKeyJson, is_change: bool) -> Result< ExtendedPubKey, LedgerKeyStoreError> {
-        let pub_key = PublicKey::from_str(&s.address)?;
-        let chain_code = ChainCode(s.chain_code);
-        Ok(to_ext_pub_key (pub_key, chain_code, is_change))
+    let ext_pub_key_root = {
+        let path = DerivationPath::from_str("m/44'/309'/0'").unwrap();
+        let public_key = PublicKey::from_str(&acc.extended_public_key_root.address)?;
+        let chain_code = ChainCode(acc.extended_public_key_root.chain_code);
+        ExtendedPubKey {
+            depth: path.as_ref().len() as u8,
+            parent_fingerprint: {
+                let mut engine = hash160::Hash::engine();
+                engine
+                    .write_all(b"`parent_fingerprint` currently unused by Nervos.")
+                    .expect("write must ok");
+                Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
+            },
+            child_number: ChildNumber::Hardened { index: 0 },
+            public_key,
+            chain_code,
+        }
     };
 
-    let pub_key_root = PublicKey::from_str(&acc.public_key_root)?;
-    let ext_pub_key_external = get_ext_pub_key(&acc.extended_public_key_external, false)?;
-    let ext_pub_key_change = get_ext_pub_key(&acc.extended_public_key_change, true)?;
     Ok(LedgerImportedAccount {
-        ledger_id : LedgerId (acc.ledger_id),
+        ledger_id: LedgerId(acc.ledger_id),
         lock_arg: acc.lock_arg,
-        pub_key_root,
-        ext_pub_key_external,
-        ext_pub_key_change,
+        ext_pub_key_root,
     })
-}
-
-fn to_ext_pub_key (public_key: PublicKey, chain_code: ChainCode, is_change: bool) -> ExtendedPubKey {
-    let i = if is_change { 1 } else { 0 };
-    ExtendedPubKey {
-        depth: 4,
-        parent_fingerprint: {
-            let mut engine = hash160::Hash::engine();
-            engine
-                .write_all(b"`parent_fingerprint` currently unused by Nervos.")
-                .expect("write must ok");
-            Fingerprint::from(&hash160::Hash::from_engine(engine)[0..4])
-        },
-        child_number: ChildNumber::Normal { index: i },
-        public_key,
-        chain_code,
-    }
 }
