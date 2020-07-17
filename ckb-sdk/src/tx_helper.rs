@@ -328,29 +328,44 @@ impl TxHelper {
                 // array just to parse them apart.
                 if is_ledger {
                     let multisig_config_opt = self.multisig_configs.get(&multisig_hash160);
-                    let witnesses_vec = if let Some(multisig_config) = multisig_config_opt {
+                    let witnesses_vec = {
                         let init_witness_idx = idxs[0];
-                        let witness_args = if init_witnesses[init_witness_idx].raw_data().is_empty() {
+                        let init_witness = if init_witnesses[init_witness_idx].raw_data().is_empty() {
                             WitnessArgs::default()
                         } else {
                             WitnessArgs::from_slice(init_witnesses[init_witness_idx].raw_data().as_ref())
                                 .map_err(|err| err.to_string())?
                         };
-                        let lock_without_sig = {
-                            let sig_len = (multisig_config.threshold() as usize) * SECP_SIGNATURE_SIZE;
-                            let mut data = multisig_config.to_witness_data();
-                            data.extend_from_slice(vec![0u8; sig_len].as_slice());
-                            data
+                        let init_witness = if let Some(multisig_config) = multisig_config_opt {
+                            let lock_without_sig = {
+                                let sig_len = (multisig_config.threshold() as usize) * SECP_SIGNATURE_SIZE;
+                                let mut data = multisig_config.to_witness_data();
+                                data.extend_from_slice(vec![0u8; sig_len].as_slice());
+                                data
+                            };
+                            init_witness
+                                .as_builder()
+                                .lock(Some(lock_without_sig).pack())
+                                .build()
+                        } else {
+                            init_witness
+                                .as_builder()
+                                .lock(Some(Bytes::from(vec![0u8; SECP_SIGNATURE_SIZE])).pack())
+                                .build()
                         };
-                        let witnesses = witness_args
-                            .as_builder()
-                            .lock(Some(lock_without_sig).pack())
-                            .build();
                         let mut witnesses_vec: Vec<packed::Bytes> = Vec::new();
-                        witnesses_vec.push(witnesses.as_bytes().pack());
+                        witnesses_vec.push(init_witness.as_bytes().pack());
+                        for idx in idxs.iter().skip(1).cloned() {
+                            // let other_witness: &packed::Bytes = &init_witnesses[idx];
+                            // witnesses_vec.push(other_witness.as_bytes().pack());
+                            // Somehow the above code doesnt do what we expect to achieve
+                            // Adding an 'other_witness' with 4 bytes creates this in witness on ledger
+                            // 040000000000000000000000
+                            // But what we want is just 8 bytes of 0
+                            // 0000000000000000
+                            witnesses_vec.push(Bytes::new().pack());
+                        }
                         witnesses_vec
-                    } else {
-                        init_witnesses.clone()
                     };
                     signatures.insert(lock_arg, make_ledger_info((witnesses_vec, builder))?);
                 } else {
