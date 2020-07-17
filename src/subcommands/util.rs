@@ -643,7 +643,7 @@ fn sign_message(
             let key = ledger_keystore.borrow_account(&account)
                 // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
-            key.sign_message(message)
+            key.sign_message(message, None, true)
                .map_err(|err| err.to_string())
                .map(|sig| sig.serialize_compact().to_vec() )
         }

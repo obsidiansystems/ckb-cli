@@ -394,7 +394,6 @@ impl LedgerMasterCap {
         let my_self = self.clone();
         assert!(message.len() > 0, "initial message must be non-empty");
 
-
        let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
        let mut bip_path = Vec::new();
         bip_path.write_u8(drv_path.as_ref().len() as u8)
@@ -424,17 +423,24 @@ impl LedgerMasterCap {
         return Ok(rec_sig.to_standard());
     }
 
-    pub fn sign_message(&self, message: &[u8]) -> Result<Signature, LedgerKeyStoreError> {
+    pub fn sign_message(&self, message: &[u8], path_opt: Option<DerivationPath>, display_hex: bool) -> Result<Signature, LedgerKeyStoreError> {
         let message_vec : Vec<u8> = message.iter().cloned().collect();
         let my_self = self.clone();
         let chunk = |mut message: &[u8]| -> Result<_, LedgerKeyStoreError> {
             assert!(message.len() > 0, "initial message must be non-empty");
 
-            // Init packet provides only the account index
+           let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
+           let mut init_packet = vec![display_hex as u8];
+            init_packet.write_u8(drv_path.as_ref().len() as u8)
+                .expect(WRITE_ERR_MSG);
+            for &child_num in drv_path.as_ref().iter() {
+                init_packet.write_u32::<BigEndian>(From::from(child_num))
+                    .expect(WRITE_ERR_MSG);
+            }
             let ledger_app = my_self.ledger_app.as_ref()
                 .ok_or(LedgerKeyStoreError::LedgerNotFound { id: my_self.account.ledger_id.clone()})?;
-            // Only support account index 0 for now
-            let init_apdu = apdu::sign_message(SignP1::FIRST.bits, [0, 0, 0, 0].to_vec()); //send uint32_t
+
+            let init_apdu = apdu::sign_message(SignP1::FIRST.bits, init_packet);
             let _ = ledger_app.exchange(&init_apdu);
 
 
