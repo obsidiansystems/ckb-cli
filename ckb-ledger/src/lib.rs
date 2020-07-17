@@ -412,14 +412,7 @@ impl LedgerMasterCap {
         })
     }
 
-    pub fn sign_message_hash(
-        &self,
-        message: &[u8],
-        path_opt: Option<DerivationPath>,
-    ) -> Result<Signature, LedgerKeyStoreError> {
-        let my_self = self.clone();
-        assert!(message.len() > 0, "initial message must be non-empty");
-
+    fn derivation_path_to_bytes(path_opt: Option<DerivationPath>) -> Vec<u8> {
         let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
         let mut bip_path = Vec::new();
         bip_path
@@ -430,7 +423,18 @@ impl LedgerMasterCap {
                 .write_u32::<BigEndian>(From::from(child_num))
                 .expect(WRITE_ERR_MSG);
         }
-        let init_packet = bip_path;
+        return bip_path;
+    }
+
+    pub fn sign_message_hash(
+        &self,
+        message: &[u8],
+        path_opt: Option<DerivationPath>,
+    ) -> Result<Signature, LedgerKeyStoreError> {
+        let my_self = self.clone();
+        assert!(message.len() > 0, "initial message must be non-empty");
+
+        let init_packet = LedgerMasterCap::derivation_path_to_bytes(path_opt);
         let init_apdu = apdu::sign_message_hash(SignP1::FIRST.bits, init_packet);
         let ledger_app =
             my_self
@@ -487,16 +491,9 @@ impl LedgerMasterCap {
         let chunk = |mut message: &[u8]| -> Result<_, LedgerKeyStoreError> {
             assert!(message.len() > 0, "initial message must be non-empty");
 
-            let drv_path = path_opt.unwrap_or(DerivationPath::from_str("m/44'/309'/0'").unwrap());
-            let mut init_packet = vec![display_hex as u8];
-            init_packet
-                .write_u8(drv_path.as_ref().len() as u8)
-                .expect(WRITE_ERR_MSG);
-            for &child_num in drv_path.as_ref().iter() {
-                init_packet
-                    .write_u32::<BigEndian>(From::from(child_num))
-                    .expect(WRITE_ERR_MSG);
-            }
+            let display_byte = vec![display_hex as u8];
+            let bip_path = LedgerMasterCap::derivation_path_to_bytes(path_opt);
+            let init_packet = [&display_byte[..], &bip_path[..]].concat();
             let ledger_app =
                 my_self
                     .ledger_app

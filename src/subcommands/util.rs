@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use chrono::prelude::*;
 use ckb_crypto::secp::{SECP256K1 };
 use ckb_hash::blake2b_256;
@@ -6,7 +5,7 @@ use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::{ChildNumber, AbstractKeyStore, DerivationPath, KeyStore},
+    wallet::{ChildNumber, AbstractKeyStore, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -366,6 +365,7 @@ message = "0x"
                 let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
                 let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
 
+                let display_hex : bool = binary_opt.is_some();
                 let to_sign : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
@@ -392,6 +392,7 @@ message = "0x"
                     priv_or_acc_with_kstore,
                     recoverable,
                     &msg_with_magic,
+                    display_hex,
                 )?;
                 let result = serde_json::json!({
                     "message-hash": format!("{:#x}", H256::from(blake2b_256(&msg_with_magic))),
@@ -610,6 +611,7 @@ fn sign_message(
     key_and_store : Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)>,
     recoverable: bool,
     message: &[u8],
+    ledger_display_hex: bool,
 ) -> Result<Vec<u8>, String> {
     let hash = H256::from(blake2b_256(message));
     let hash_bytes = secp256k1::Message::from_slice(hash.as_bytes()).unwrap();
@@ -639,14 +641,13 @@ fn sign_message(
         }
         Either::Right((account, Either::Right(ledger_keystore))) => {
             let key = ledger_keystore.borrow_account(&account)
-                // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
             if recoverable {
-                key.sign_message_recoverable(message, None, true)
+                key.sign_message_recoverable(message, None, ledger_display_hex)
                     .map_err(|err| err.to_string())
                     .map(|sig| serialize_signature(&sig).to_vec())
             } else {
-                key.sign_message(message, None, true)
+                key.sign_message(message, None, ledger_display_hex)
                     .map_err(|err| err.to_string())
                     .map(|sig| sig.serialize_compact().to_vec() )
             }
