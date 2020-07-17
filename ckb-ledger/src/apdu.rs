@@ -72,3 +72,13 @@ pub fn sign_message(p1_byte: u8, vec: Vec<u8>) -> APDUCommand {
         data: vec,
     }
 }
+
+pub fn sign_message_hash(p1_byte: u8, vec: Vec<u8>) -> APDUCommand {
+    APDUCommand {
+        cla: 0x80,
+        ins: 0x07,
+        p1: p1_byte,
+        p2: 0x00,
+        data: vec,
+    }
+}

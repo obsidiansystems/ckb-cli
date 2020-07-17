@@ -5,7 +5,7 @@ use ckb_ledger::{ LedgerKeyStore};
 use ckb_sdk::{
     constants::{MULTISIG_TYPE_HASH, SIGHASH_TYPE_HASH},
     rpc::ChainInfo,
-    wallet::{AbstractKeyStore, KeyStore},
+    wallet::{ChildNumber, AbstractKeyStore, KeyStore},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
 use ckb_types::{
@@ -25,7 +25,7 @@ use super::CliSubCommand;
 use crate::utils::{
     arg,
     arg_parser::{
-        AddressParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
+        AddressParser, DerivationPathParser, AddressPayloadOption, ArgParser, FixedHashParser, FromStrParser, HexParser,
         PrivkeyPathParser, PrivkeyWrapper, PubkeyHexParser, NullParser
     },
     other::{get_address, read_password, serialize_signature, privkey_or_from_account},
@@ -113,6 +113,22 @@ impl<'a> UtilSubCommand<'a> {
                     .arg(arg_address.clone().required(false))
                     .arg(arg::lock_arg().clone()),
 
+                SubCommand::with_name("ledger-sign-hash")
+                    .about("Sign ledger hash with secp256k1 signature")
+                    .arg(
+                        arg::from_account()
+                    )
+                    .arg(
+                        binary_hex_arg
+                            .clone()
+                            .help("The hash to be signed in hex"),
+                    )
+                    .arg(
+                        Arg::with_name("path")
+                            .long("path")
+                            .takes_value(true)
+                            .help("The address path")
+                    ),
                 SubCommand::with_name("sign-message")
                     .about("Sign message with secp256k1 signature")
                     .arg(arg::privkey_path().required_unless(arg::from_account().b.name))
@@ -305,12 +321,51 @@ message = "0x"
                 });
                 Ok(resp.render(format, color))
             }
+            ("ledger-sign-hash", Some(m)) => {
+                let binary_opt : Option<Vec<u8>> = HexParser.from_matches_opt(m, "binary-hex", false)?;
+
+                let path_opt = Some(DerivationPathParser.from_matches(m, "path")?);
+                let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
+                    .from_matches_opt(m, "from-account", false)?;
+                if let (Some(lock_arg), Some(binary)) = (from_account_opt, binary_opt) {
+                    if self.ledger_key_store.borrow_account(&lock_arg).is_ok() {
+                        let account = self.ledger_key_store.borrow_account(&lock_arg)
+                            .map_err(|err| err.to_string())?;
+                        let signature = account.sign_message_hash(&binary[..], path_opt.clone())
+                           .map_err(|err| err.to_string());
+                        let signature_display = signature.clone().map(|sig| sig.serialize_compact().to_vec() )?;
+
+                        let pubkey = if let Some(ext_path) = path_opt {
+                                let children : Vec<ChildNumber> = ext_path.clone().into_iter().cloned().collect();
+                                let epk = account.get_extended_pubkey(&children[..])
+                                    .map_err(|err| err.to_string())?;
+                                epk.public_key
+                            } else {
+                                account.get_root_pubkey()
+                            };
+                        let message_hash = secp256k1::Message::from_slice(&binary[..])
+                            .expect("Convert to message failed");
+                        let verify_ok = SECP256K1.verify(&message_hash, &signature.unwrap(), &pubkey).is_ok();
+                        println!("VERIFY: {}", verify_ok);
+
+                        let result = serde_json::json!({
+                            "message-hash": format!("{}", hex_string(&binary).unwrap()),
+                            "signature": format!("0x{}", hex_string(&signature_display).unwrap()),
+                            // "recoverable": recoverable,
+                        });
+                        return Ok(result.render(format, color))
+                    }
+                }
+                return Err(String::from("Failure"));
+            }
+
             ("sign-message", Some(m)) => {
                 let magic_string = String::from("Nervos Message:");
                 let magic_bytes = magic_string.as_bytes();
                 let binary_opt = HexParser.from_matches_opt(m, "binary-hex", false)?;
                 let message_str_opt : Option<String> = NullParser.from_matches_opt(m, "message", false)?;
 
+                let display_hex : bool = binary_opt.is_some();
                 let to_sign : Vec<u8> = if let Some(binary) = binary_opt {
                     binary
                 } else if let Some(message_str) = message_str_opt {
@@ -337,6 +392,7 @@ message = "0x"
                     priv_or_acc_with_kstore,
                     recoverable,
                     &msg_with_magic,
+                    display_hex,
                 )?;
                 let result = serde_json::json!({
                     "message-hash": format!("{:#x}", H256::from(blake2b_256(&msg_with_magic))),
@@ -555,6 +611,7 @@ fn sign_message(
     key_and_store : Either<PrivkeyWrapper, (H160, Either<&mut KeyStore, &mut LedgerKeyStore>)>,
     recoverable: bool,
     message: &[u8],
+    ledger_display_hex: bool,
 ) -> Result<Vec<u8>, String> {
     let hash = H256::from(blake2b_256(message));
     let hash_bytes = secp256k1::Message::from_slice(hash.as_bytes()).unwrap();
@@ -584,14 +641,13 @@ fn sign_message(
         }
         Either::Right((account, Either::Right(ledger_keystore))) => {
             let key = ledger_keystore.borrow_account(&account)
-                // .and_then(|acc_cap| {acc_cap.extended_privkey(&[])})
                 .map_err(|err| err.to_string())?;
             if recoverable {
-                key.sign_message_recoverable(message)
+                key.sign_message_recoverable(message, None, ledger_display_hex)
                     .map_err(|err| err.to_string())
                     .map(|sig| serialize_signature(&sig).to_vec())
             } else {
-                key.sign_message(message)
+                key.sign_message(message, None, ledger_display_hex)
                     .map_err(|err| err.to_string())
                     .map(|sig| sig.serialize_compact().to_vec() )
             }
