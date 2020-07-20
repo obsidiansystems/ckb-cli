@@ -9,14 +9,14 @@ license = "MIT"
 serde = { version = "1.0", features = ["rc"] }
 serde_derive = "1.0"
 
-ckb-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-script = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1", default-features = false }
-ckb-jsonrpc-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-hash = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-error = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
+ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-script = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec", default-features = false }
+ckb-jsonrpc-types = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-hash = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-error = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
 
 [dev-dependencies]
-ckb-crypto = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1", features = ["secp"] }
+ckb-crypto = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec", features = ["secp"] }
 
 [features]
 default = ["ckb-script/default"]
