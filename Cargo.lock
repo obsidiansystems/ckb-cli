@@ -331,12 +331,12 @@ dependencies = [
 [[package]]
 name = "ckb-build-info"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 
 [[package]]
 name = "ckb-chain-spec"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-crypto",
  "ckb-dao-utils",
@@ -420,7 +420,7 @@ dependencies = [
 [[package]]
 name = "ckb-crypto"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-fixed-hash",
  "failure",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "ckb-dao-utils"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "byteorder",
  "ckb-error",
@@ -445,7 +445,7 @@ dependencies = [
 [[package]]
 name = "ckb-error"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-occupied-capacity",
  "enum-display-derive",
@@ -456,7 +456,7 @@ dependencies = [
 [[package]]
 name = "ckb-fixed-hash"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-fixed-hash-core",
  "ckb-fixed-hash-hack",
@@ -466,7 +466,7 @@ dependencies = [
 [[package]]
 name = "ckb-fixed-hash-core"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "failure",
  "faster-hex 0.4.1",
@@ -476,7 +476,7 @@ dependencies = [
 [[package]]
 name = "ckb-fixed-hash-hack"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-fixed-hash-core",
  "proc-macro-hack",
@@ -488,7 +488,7 @@ dependencies = [
 [[package]]
 name = "ckb-hash"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "blake2b-rs",
 ]
@@ -510,7 +510,7 @@ dependencies = [
 [[package]]
 name = "ckb-jsonrpc-types"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-types",
  "faster-hex 0.4.1",
@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "ckb-logger"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ansi_term 0.12.1",
  "backtrace",
@@ -552,7 +552,7 @@ dependencies = [
 [[package]]
 name = "ckb-occupied-capacity"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-occupied-capacity-core",
  "ckb-occupied-capacity-macros",
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "ckb-occupied-capacity-core"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "serde",
 ]
@@ -570,7 +570,7 @@ dependencies = [
 [[package]]
 name = "ckb-occupied-capacity-macros"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-occupied-capacity-core",
  "proc-macro-hack",
@@ -581,7 +581,7 @@ dependencies = [
 [[package]]
 name = "ckb-pow"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "byteorder",
  "ckb-hash",
@@ -593,7 +593,7 @@ dependencies = [
 [[package]]
 name = "ckb-rational"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "numext-fixed-uint",
 ]
@@ -601,7 +601,7 @@ dependencies = [
 [[package]]
 name = "ckb-resource"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-system-scripts",
  "ckb-types",
@@ -626,7 +626,7 @@ dependencies = [
 [[package]]
 name = "ckb-script"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "byteorder",
  "ckb-chain-spec",
@@ -646,7 +646,7 @@ dependencies = [
 [[package]]
 name = "ckb-script-data-loader"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "ckb-types",
 ]
@@ -712,7 +712,7 @@ dependencies = [
 [[package]]
 name = "ckb-types"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "bit-vec",
  "bytes 0.5.4",
@@ -732,7 +732,7 @@ dependencies = [
 [[package]]
 name = "ckb-util"
 version = "0.34.0-pre"
-source = "git+https://github.com/nervosnetwork/ckb?tag=v0.34.0-rc1#673fd25518f9e9cea8814b9870758a8e7ba7dc14"
+source = "git+https://github.com/obsidiansystems/ckb?rev=9c7c051777c06e540f68bb665277077c3ce8dbec#9c7c051777c06e540f68bb665277077c3ce8dbec"
 dependencies = [
  "linked-hash-map 0.5.1",
  "parking_lot 0.7.1",

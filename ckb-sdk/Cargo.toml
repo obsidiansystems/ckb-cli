@@ -25,10 +25,10 @@ uuid = { version = "0.7.4", features = ["v4"] }
 chrono = "0.4.6"
 failure = "0.1.5"
 
-ckb-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-script = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-jsonrpc-types = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-hash = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-resource = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1" }
-ckb-crypto = { git = "https://github.com/nervosnetwork/ckb", tag = "v0.34.0-rc1", features = ["secp"] }
+ckb-types = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-script = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-jsonrpc-types = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-hash = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-resource = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec" }
+ckb-crypto = { git = "https://github.com/obsidiansystems/ckb", rev = "9c7c051777c06e540f68bb665277077c3ce8dbec", features = ["secp"] }
 ckb-sdk-types = { path = "../ckb-sdk-types" }
