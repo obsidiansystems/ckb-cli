@@ -324,7 +324,13 @@ message = "0x"
             ("ledger-sign-hash", Some(m)) => {
                 let binary_opt : Option<Vec<u8>> = HexParser.from_matches_opt(m, "binary-hex", false)?;
 
-                let path_opt = Some(DerivationPathParser.from_matches(m, "path")?);
+                let path_parsed = DerivationPathParser.from_matches(m, "path")?;
+                // Due to how DerivationPathParser works on the empty string, we do this:
+                let path_opt = if path_parsed == (ckb_sdk::wallet::DerivationPath::from(vec![])) {
+                    None
+                } else { 
+                    Some(path_parsed) 
+                };
                 let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
                     .from_matches_opt(m, "from-account", false)?;
                 if let (Some(lock_arg), Some(binary)) = (from_account_opt, binary_opt) {
