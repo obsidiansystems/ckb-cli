@@ -360,13 +360,14 @@ message = "0x"
                     .transpose()?
                     .unwrap_or_else(DerivationPath::empty);
 
-                let mut binary = if let Some(data) = binary_opt {
-                    data
+                let (mut binary, target) = if let Some(data) = binary_opt {
+                    (data.clone(), SignTarget::AnyData(JsonBytes::from_vec(data)))
                 } else {
-                    m.value_of("utf8-string")
-                        .ok_or_else(|| "<binary-hex> or <string> is required".to_string())?
-                        .as_bytes()
-                        .to_vec()
+                    let utf8_string = m
+                        .value_of("utf8-string")
+                        .ok_or_else(|| "<binary-hex> or <string> is required".to_string())?;
+                    let binary = utf8_string.as_bytes().to_vec();
+                    (binary, SignTarget::AnyString(utf8_string.to_string()))
                 };
 
                 if !no_magic_bytes {
@@ -381,7 +382,7 @@ message = "0x"
                     &target_path,
                     recoverable,
                     &message,
-                    Some(binary),
+                    target,
                     password,
                 )?;
                 let result = serde_json::json!({
@@ -435,7 +436,7 @@ message = "0x"
                     &target_path,
                     recoverable,
                     &message,
-                    None,
+                    SignTarget::AnyMessage(message.clone()),
                     password,
                 )?;
                 let result = serde_json::json!({
@@ -707,7 +708,7 @@ fn sign_message<P: ?Sized + AsRef<[ChildNumber]>>(
     path: &P,
     recoverable: bool,
     message: &H256,
-    data: Option<Vec<u8>>,
+    target: SignTarget,
     password: Option<String>,
 ) -> Result<Vec<u8>, String> {
     match (from_privkey_opt, from_account_opt, recoverable) {
@@ -722,24 +723,14 @@ fn sign_message<P: ?Sized + AsRef<[ChildNumber]>>(
             let message = secp256k1::Message::from_slice(message.as_bytes()).unwrap();
             Ok(serialize_signature(&SECP256K1.sign_recoverable(&message, privkey)).to_vec())
         }
-        (None, Some((plugin_mgr, account)), false) => {
-            let target = data
-                .map(|data| SignTarget::AnyData(JsonBytes::from_vec(data)))
-                .unwrap_or_else(|| SignTarget::AnyMessage(message.clone()));
-            plugin_mgr
-                .keystore_handler()
-                .sign(account, path, message.clone(), target, password, false)
-                .map(|bytes| (&bytes[..]).to_vec())
-        }
-        (None, Some((plugin_mgr, account)), true) => {
-            let target = data
-                .map(|data| SignTarget::AnyData(JsonBytes::from_vec(data)))
-                .unwrap_or_else(|| SignTarget::AnyMessage(message.clone()));
-            plugin_mgr
-                .keystore_handler()
-                .sign(account, path, message.clone(), target, password, true)
-                .map(|bytes| (&bytes[..]).to_vec())
-        }
+        (None, Some((plugin_mgr, account)), false) => plugin_mgr
+            .keystore_handler()
+            .sign(account, path, message.clone(), target, password, false)
+            .map(|bytes| (&bytes[..]).to_vec()),
+        (None, Some((plugin_mgr, account)), true) => plugin_mgr
+            .keystore_handler()
+            .sign(account, path, message.clone(), target, password, true)
+            .map(|bytes| (&bytes[..]).to_vec()),
         _ => Err(String::from("Both privkey and key store is missing")),
     }
 }
