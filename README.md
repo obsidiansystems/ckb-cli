@@ -1,6 +1,8 @@
 # ckb-cli
 CKB command line tool
 
+**NOTE**: This fork contains a number of experimental features and should only be used for development and testing purposes
+
 ## Features
 ```
     rpc         Invoke RPC call to node
