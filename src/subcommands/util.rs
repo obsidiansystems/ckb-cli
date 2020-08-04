@@ -104,7 +104,7 @@ impl<'a> UtilSubCommand<'a> {
             .long("extended-address")
             .takes_value(true)
             .validator(|input| AddressParser::new_sighash().validate(input))
-            .conflicts_with(arg::pubkey().get_name())
+            // .conflicts_with(arg::pubkey().get_name())
             .conflicts_with(arg::privkey_path().get_name())
             .about("The address extended from `m/44'/309'/0'` (Search 2000 receiving addresses and 2000 change addresses max)");
 
