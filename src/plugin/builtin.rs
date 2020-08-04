@@ -11,7 +11,7 @@ use crossbeam_channel::bounded;
 use plugin_protocol::{JsonrpcError, KeyStoreRequest, PluginRequest, PluginResponse};
 
 use super::manager::PluginHandler;
-use crate::utils::other::{get_key_store, serialize_signature};
+use crate::utils::other::{get_key_store, serialize_signature, read_password};
 
 pub const ERROR_KEYSTORE_REQUIRE_PASSWORD: &str = "keystore require password";
 
@@ -41,10 +41,8 @@ impl DefaultKeyStore {
             request: KeyStoreRequest,
         ) -> Result<PluginResponse, String> {
             match request {
-                KeyStoreRequest::CreateAccount(password) => {
-                    let password = password.ok_or_else(|| {
-                        String::from("Password is required by default keystore: create account")
-                    })?;
+                KeyStoreRequest::CreateAccount(_password) => {
+                    let password = read_password(false, None)?;
                     keystore
                         .new_account(password.as_bytes())
                         .map(PluginResponse::H160)
@@ -64,11 +62,9 @@ impl DefaultKeyStore {
                 KeyStoreRequest::Import {
                     privkey,
                     chain_code,
-                    password,
+                    password: _,
                 } => {
-                    let password = password.ok_or_else(|| {
-                        String::from("Password is required by default keystore: import key")
-                    })?;
+                    let password = read_password(false, None)?;
                     let privkey = secp256k1::SecretKey::from_slice(&privkey)
                         .map_err(|err| err.to_string())?;
                     let mut data = [0u8; 64];
@@ -85,10 +81,8 @@ impl DefaultKeyStore {
                 KeyStoreRequest::ImportAccount { .. } => {
                     Err("Not supported in file based keystore".to_string())
                 }
-                KeyStoreRequest::Export { hash160, password } => {
-                    let password = password.ok_or_else(|| {
-                        String::from("Password is required by default keystore: export key")
-                    })?;
+                KeyStoreRequest::Export { hash160, password: _ } => {
+                    let password = read_password(false, None)?;
                     keystore
                         .export_key(&hash160, password.as_bytes())
                         .map(|master_privkey| {
@@ -109,10 +103,9 @@ impl DefaultKeyStore {
                     external_max_len,
                     change_last,
                     change_max_len,
-                    password,
+                    password: _,
                 } => {
-                    let password =
-                        password.ok_or_else(|| String::from(ERROR_KEYSTORE_REQUIRE_PASSWORD))?;
+                    let password = read_password(false, None)?;
                     keystore
                         .get_ckb_root(&hash160, true)
                         .cloned()
@@ -136,10 +129,9 @@ impl DefaultKeyStore {
                     external_length,
                     change_start,
                     change_length,
-                    password,
+                    password: _,
                 } => {
-                    let password =
-                        password.ok_or_else(|| String::from(ERROR_KEYSTORE_REQUIRE_PASSWORD))?;
+                    let password = read_password(false, None)?;
                     keystore
                         .get_ckb_root(&hash160, true)
                         .cloned()
@@ -175,12 +167,10 @@ impl DefaultKeyStore {
                     path,
                     message,
                     target: _target,
-                    password,
+                    password: _,
                     recoverable,
                 } => {
-                    let password = password.ok_or_else(|| {
-                        String::from("Password is required by default keystore: sign")
-                    })?;
+                    let password = read_password(false, None)?;
                     let path = DerivationPath::from_str(&path).map_err(|err| err.to_string())?;
                     let signature = if recoverable {
                         keystore
@@ -209,11 +199,9 @@ impl DefaultKeyStore {
                 KeyStoreRequest::ExtendedPubkey {
                     hash160,
                     path,
-                    password,
+                    password: _,
                 } => {
-                    let password = password.ok_or_else(|| {
-                        String::from("Password is required by default keystore: extended pubkey")
-                    })?;
+                    let password = read_password(false, None)?;
                     let path = DerivationPath::from_str(&path).map_err(|err| err.to_string())?;
                     let data = keystore
                         .extended_pubkey_with_password(&hash160, path.as_ref(), password.as_bytes())
