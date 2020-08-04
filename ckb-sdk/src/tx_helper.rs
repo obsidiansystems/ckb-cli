@@ -564,19 +564,27 @@ pub fn build_signature<
     blake2b.update(tx.hash().as_slice());
     blake2b.update(&(init_witness.as_bytes().len() as u64).to_le_bytes());
     blake2b.update(&init_witness.as_bytes());
+    let mut tx_witnesses: Vec<_> = Vec::new();
+    tx_witnesses.push(init_witness.as_bytes());
     for idx in input_group_idxs.iter().skip(1).cloned() {
         let other_witness: &packed::Bytes = &witnesses[idx];
         blake2b.update(&(other_witness.len() as u64).to_le_bytes());
         blake2b.update(&other_witness.raw_data());
+        tx_witnesses.push(other_witness.raw_data());
     }
     for outter_witness in &witnesses[input_size..witnesses.len()] {
         blake2b.update(&(outter_witness.len() as u64).to_le_bytes());
         blake2b.update(&outter_witness.raw_data());
+        tx_witnesses.push(outter_witness.raw_data());
     }
     let mut message = [0u8; 32];
     blake2b.finalize(&mut message);
     let message = H256::from(message);
-    signer(&message, &tx.data().into()).map(|data| Bytes::from(data.to_vec()))
+    let tx_with_witnesses = tx
+        .as_advanced_builder()
+        .set_witnesses(tx_witnesses.into_iter().map(|v| v.pack()).collect())
+        .build();
+    signer(&message, &tx_with_witnesses.data().into()).map(|data| Bytes::from(data.to_vec()))
 }
 
 #[cfg(test)]
