@@ -2,6 +2,7 @@ mod index;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use ckb_jsonrpc_types as json_types;
 use ckb_types::{
@@ -786,10 +787,15 @@ fn get_keystore_signer(
                             .ok_or_else(|| format!("transaction not exists: {:x}", tx_hash))
                     })
                     .collect::<Result<Vec<_>, String>>()?;
+                let change_path_fixed = if change_path == DerivationPath::empty() {
+                    DerivationPath::from_str("m/44'/309'/0'").unwrap()
+                } else {
+                    change_path.clone()
+                };
                 SignTarget::Transaction {
                     tx: tx.clone(),
                     inputs,
-                    change_path: change_path.to_string(),
+                    change_path: change_path_fixed.to_string(),
                 }
             };
             let data = keystore.sign(
