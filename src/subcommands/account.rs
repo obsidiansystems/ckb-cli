@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use ckb_sdk::{
     wallet::{DerivationPath, Key, KeyStore, MasterPrivKey},
@@ -445,7 +444,7 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
                 let path: DerivationPath = FromStrParser::<DerivationPath>::new()
                     .from_matches_opt(m, "path", false)?
-                    .unwrap_or_else(|| DerivationPath::from_str("m/44'/309'/0'").unwrap());
+                    .unwrap_or_else(DerivationPath::empty);
 
                 let password = if self.plugin_mgr.keystore_require_password() {
                     Some(read_password(false, None)?)

@@ -8,7 +8,6 @@ use ckb_sdk::{
     wallet::{ChildNumber, DerivationPath},
     Address, AddressPayload, CodeHashIndex, HttpRpcClient, NetworkType, OldAddress,
 };
-use std::str::FromStr;
 use ckb_types::{
     bytes::BytesMut,
     core::{EpochNumberWithFraction, ScriptHashType},
@@ -359,7 +358,7 @@ message = "0x"
                         search_path(self.plugin_mgr, account, addr, password.clone())
                     })
                     .transpose()?
-                    .unwrap_or_else(|| DerivationPath::from_str("m/44'/309'/0'").unwrap());
+                    .unwrap_or_else(DerivationPath::empty);
 
                 let (mut binary, target) = if let Some(data) = binary_opt {
                     (data.clone(), SignTarget::AnyData(JsonBytes::from_vec(data)))
@@ -427,7 +426,7 @@ message = "0x"
                         search_path(self.plugin_mgr, account, addr, password.clone())
                     })
                     .transpose()?
-                    .unwrap_or_else(|| DerivationPath::from_str("m/44'/309'/0'").unwrap());
+                    .unwrap_or_else(DerivationPath::empty);
 
                 let plugin_mgr_opt =
                     from_account_opt.map(|account| (&mut *self.plugin_mgr, account));
@@ -482,7 +481,7 @@ message = "0x"
                         search_path(self.plugin_mgr, account, addr, password.clone())
                     })
                     .transpose()?
-                    .unwrap_or_else(|| DerivationPath::from_str("m/44'/309'/0'").unwrap());
+                    .unwrap_or_else(DerivationPath::empty);
 
                 let pubkey = if let Some(pubkey) = pubkey_opt {
                     pubkey
