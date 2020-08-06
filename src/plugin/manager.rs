@@ -1483,7 +1483,25 @@ impl KeyStoreHandler {
         password: Option<String>,
         recoverable: bool,
     ) -> Result<Bytes, String> {
-        let path = DerivationPath::from(path.as_ref().to_vec()).to_string();
+
+        // Ledger hack
+        let (path, target) = if Some(true) == self.actived_plugin.as_ref().map(|plugin| plugin.name == "ledger_plugin") {
+          let str_path = DerivationPath::from(path.as_ref().to_vec()).to_string();
+          let path = if str_path == "m" { String::from("m/44'/309'/0'") } else { str_path };
+          let target = if let SignTarget::Transaction { tx, inputs, change_path } = target.clone() {
+              if change_path == "m" { 
+                  SignTarget::Transaction { tx, inputs, change_path: String::from("m/44'/309'/0'")}
+              } else { 
+                  target
+              }
+          } else {
+              target
+          };
+          (path, target)
+        } else {
+            (DerivationPath::from(path.as_ref().to_vec()).to_string(), target)
+        };
+
         let request = KeyStoreRequest::Sign {
             hash160,
             path,
@@ -1504,7 +1522,14 @@ impl KeyStoreHandler {
         path: &P,
         password: Option<String>,
     ) -> Result<secp256k1::PublicKey, String> {
-        let path = DerivationPath::from(path.as_ref().to_vec()).to_string();
+        // Ledger hack
+        let path = if Some(true) == self.actived_plugin.as_ref().map(|plugin| plugin.name == "ledger_plugin") {
+            let str_path = DerivationPath::from(path.as_ref().to_vec()).to_string();
+            if str_path == "m" { String::from("m/44'/309'/0'") } else { str_path }
+        } else {
+            DerivationPath::from(path.as_ref().to_vec()).to_string()
+        };
+
         let request = KeyStoreRequest::ExtendedPubkey {
             hash160,
             path,

@@ -12,6 +12,7 @@ use ckb_index::{with_index_db, IndexDatabase, LiveCellInfo};
 use ckb_jsonrpc_types::{self as json_types, JsonBytes};
 use ckb_sdk::{
     constants::{MIN_SECP_CELL_CAPACITY, SIGHASH_TYPE_HASH},
+    wallet::DerivationPath,
     GenesisInfo, HttpRpcClient, SignerFn,
 };
 use ckb_types::{
@@ -367,7 +368,7 @@ fn get_keystore_signer(
                         SignTarget::Transaction {
                             tx: tx.clone(),
                             inputs,
-                            change_path: "m/44'/309'/0'".to_string(),
+                            change_path: DerivationPath::empty().to_string(),
                         }
                     };
                     let data = keystore.sign(
