@@ -19,7 +19,7 @@ All second level sub-commands are listed in [wiki page](https://github.com/nervo
 
 ## Build this project
 ```
-git clone https://github.com/nervosnetwork/ckb-cli.git
+git clone https://github.com/obsidiansystems/ckb-cli.git
 cd ckb-cli
 cargo install --path . -f
 ```
