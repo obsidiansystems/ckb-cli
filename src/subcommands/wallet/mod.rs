@@ -3,17 +3,21 @@ mod index;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use ckb_hash::new_blake2b;
+use ckb_jsonrpc_types as json_types;
 use ckb_types::{
     bytes::Bytes,
     core::{BlockView, Capacity, ScriptHashType, TransactionView},
     h256,
-    packed::{CellOutput, OutPoint, Script},
+    packed::{self, Byte32, CellOutput, OutPoint, Script, ScriptOpt},
     prelude::*,
     H160, H256,
 };
-use clap::{App, ArgMatches, SubCommand};
+use clap::{App, AppSettings, Arg, ArgMatches};
+use serde::{Deserialize, Serialize};
 
-use super::CliSubCommand;
+use super::{CliSubCommand, Output};
+use crate::plugin::{KeyStoreHandler, PluginManager, SignTarget};
 use crate::utils::{
     arg,
     arg_parser::{
@@ -22,18 +26,18 @@ use crate::utils::{
     },
     index::IndexController,
     other::{
-        check_capacity, get_address, get_live_cell_with_cache, get_max_mature_number,
-        get_network_type, get_privkey_signer, get_to_data, is_mature, read_password,
-        serialize_signature,
+        check_capacity, get_address, get_arg_value, get_live_cell_with_cache,
+        get_max_mature_number, get_network_type, get_privkey_signer, get_to_data, is_mature,
+        read_password, sync_to_tip,
     },
-    printer::{OutputFormat, Printable},
 };
+use ckb_chain_spec::consensus::TYPE_ID_CODE_HASH;
 use ckb_index::{with_index_db, IndexDatabase, LiveCellInfo};
 use ckb_sdk::{
     constants::{
         DAO_TYPE_HASH, MIN_SECP_CELL_CAPACITY, MULTISIG_TYPE_HASH, ONE_CKB, SIGHASH_TYPE_HASH,
     },
-    wallet::{DerivationPath, KeyStore},
+    wallet::DerivationPath,
     Address, AddressPayload, GenesisInfo, HttpRpcClient, HumanCapacity, MultisigConfig, SignerFn,
     Since, SinceType, TxHelper, SECP256K1,
 };
@@ -44,26 +48,29 @@ const DERIVE_CHANGE_ADDRESS_MAX_LEN: u32 = 10000;
 
 pub struct WalletSubCommand<'a> {
     rpc_client: &'a mut HttpRpcClient,
-    key_store: &'a mut KeyStore,
+    plugin_mgr: &'a mut PluginManager,
     genesis_info: Option<GenesisInfo>,
     index_dir: PathBuf,
     index_controller: IndexController,
+    wait_for_sync: bool,
 }
 
 impl<'a> WalletSubCommand<'a> {
     pub fn new(
         rpc_client: &'a mut HttpRpcClient,
-        key_store: &'a mut KeyStore,
+        plugin_mgr: &'a mut PluginManager,
         genesis_info: Option<GenesisInfo>,
         index_dir: PathBuf,
         index_controller: IndexController,
+        wait_for_sync: bool,
     ) -> WalletSubCommand<'a> {
         WalletSubCommand {
             rpc_client,
-            key_store,
+            plugin_mgr,
             genesis_info,
             index_dir,
             index_controller,
+            wait_for_sync,
         }
     }
 
@@ -83,6 +90,9 @@ impl<'a> WalletSubCommand<'a> {
     where
         F: FnOnce(IndexDatabase) -> T,
     {
+        if self.wait_for_sync {
+            sync_to_tip(&self.index_controller)?;
+        }
         let network_type = get_network_type(self.rpc_client)?;
         let genesis_info = self.genesis_info()?;
         let genesis_hash: H256 = genesis_info.header().hash().unpack();
@@ -98,17 +108,17 @@ impl<'a> WalletSubCommand<'a> {
         })
     }
 
-    pub fn subcommand() -> App<'static, 'static> {
-        SubCommand::with_name("wallet")
+    pub fn subcommand() -> App<'static> {
+        App::new("wallet")
             .about("Transfer / query balance (with local index) / key utils")
             .subcommands(vec![
-                SubCommand::with_name("transfer")
+                App::new("transfer")
                     .about("Transfer capacity to an address (can have data)")
-                    .arg(arg::privkey_path().required_unless(arg::from_account().b.name))
+                    .arg(arg::privkey_path().required_unless(arg::from_account().get_name()))
                     .arg(
                         arg::from_account()
-                            .required_unless(arg::privkey_path().b.name)
-                            .conflicts_with(arg::privkey_path().b.name),
+                            .required_unless(arg::privkey_path().get_name())
+                            .conflicts_with(arg::privkey_path().get_name()),
                     )
                     .arg(arg::from_locked_address())
                     .arg(arg::to_address().required(true))
@@ -117,8 +127,15 @@ impl<'a> WalletSubCommand<'a> {
                     .arg(arg::capacity().required(true))
                     .arg(arg::tx_fee().required(true))
                     .arg(arg::derive_receiving_address_length())
-                    .arg(arg::derive_change_address().conflicts_with(arg::privkey_path().b.name)),
-                SubCommand::with_name("get-capacity")
+                    .arg(
+                        arg::derive_change_address().conflicts_with(arg::privkey_path().get_name()),
+                    )
+                    .arg(
+                        Arg::with_name("type-id")
+                            .long("type-id")
+                            .about("Add type id type script to target output cell"),
+                    ),
+                App::new("get-capacity")
                     .about("Get capacity by lock script hash or address or lock arg or pubkey")
                     .arg(arg::lock_hash())
                     .arg(arg::address())
@@ -126,8 +143,8 @@ impl<'a> WalletSubCommand<'a> {
                     .arg(arg::lock_arg())
                     .arg(arg::derive_receiving_address_length())
                     .arg(arg::derive_change_address_length())
-                    .arg(arg::derived().conflicts_with(arg::lock_hash().b.name)),
-                SubCommand::with_name("get-live-cells")
+                    .arg(arg::derived().conflicts_with(arg::lock_hash().get_name())),
+                App::new("get-live-cells")
                     .about("Get live cells by lock/type/code  hash")
                     .arg(arg::lock_hash())
                     .arg(arg::type_hash())
@@ -135,10 +152,17 @@ impl<'a> WalletSubCommand<'a> {
                     .arg(arg::address())
                     .arg(arg::live_cells_limit())
                     .arg(arg::from_block_number())
-                    .arg(arg::to_block_number()),
+                    .arg(arg::to_block_number())
+                    .arg(
+                        Arg::with_name("fast-mode")
+                            .long("fast-mode")
+                            .about("Only visit current range (by --from and --to) of live cells"),
+                    ),
                 // Move to index subcommand
-                SubCommand::with_name("db-metrics").about("Show index database metrics"),
-                SubCommand::with_name("top-capacity")
+                App::new("db-metrics")
+                    .about("Show index database metrics")
+                    .setting(AppSettings::Hidden),
+                App::new("top-capacity")
                     .about("Show top n capacity owned by lock script hash")
                     .arg(arg::top_n()),
             ])
@@ -146,59 +170,86 @@ impl<'a> WalletSubCommand<'a> {
 
     pub fn transfer(
         &mut self,
-        m: &ArgMatches,
-        format: OutputFormat,
-        color: bool,
-        debug: bool,
-    ) -> Result<String, String> {
+        args: TransferArgs,
+        skip_check: bool,
+    ) -> Result<TransactionView, String> {
+        let TransferArgs {
+            privkey_path,
+            from_account,
+            from_locked_address,
+            password,
+            derive_receiving_address_length,
+            derive_change_address,
+            capacity,
+            tx_fee,
+            to_address,
+            to_data,
+            is_type_id,
+        } = args;
+
         let network_type = get_network_type(self.rpc_client)?;
-
-        let from_privkey_opt: Option<PrivkeyWrapper> =
-            PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-        let from_account_opt: Option<H160> = FixedHashParser::<H160>::default()
-            .from_matches_opt(m, "from-account", false)
-            .or_else(|err| {
-                let result: Result<Option<Address>, String> = AddressParser::new_sighash()
-                    .set_network(network_type)
-                    .from_matches_opt(m, "from-account", false);
-                result
-                    .map(|address_opt| {
-                        address_opt
+        let from_privkey: Option<PrivkeyWrapper> = privkey_path
+            .map(|input| PrivkeyPathParser.parse(&input))
+            .transpose()?;
+        let from_account: Option<H160> = from_account
+            .map(|input| {
+                FixedHashParser::<H160>::default()
+                    .parse(&input)
+                    .or_else(|err| {
+                        let result: Result<Address, String> = AddressParser::new_sighash()
+                            .set_network(network_type)
+                            .parse(&input);
+                        result
                             .map(|address| H160::from_slice(&address.payload().args()).unwrap())
+                            .map_err(|_| err)
                     })
-                    .map_err(|_| err)
-            })?;
-        let from_locked_address_opt: Option<Address> = AddressParser::default()
+            })
+            .transpose()?;
+        let from_locked_address: Option<Address> = from_locked_address
+            .map(|input| {
+                AddressParser::default()
+                    .set_network(network_type)
+                    .set_full_type(MULTISIG_TYPE_HASH.clone())
+                    .parse(&input)
+            })
+            .transpose()?;
+        let to_capacity: u64 = CapacityParser.parse(&capacity)?.into();
+        let tx_fee: u64 = CapacityParser.parse(&tx_fee)?.into();
+        let receiving_address_length: u32 = derive_receiving_address_length
+            .map(|input| FromStrParser::<u32>::default().parse(&input))
+            .transpose()?
+            .unwrap_or(1000);
+        let last_change_address_opt: Option<Address> = derive_change_address
+            .map(|input| {
+                AddressParser::default()
+                    .set_network(network_type)
+                    .parse(&input)
+            })
+            .transpose()?;
+        let to_address: Address = AddressParser::default()
             .set_network(network_type)
-            .set_full_type(MULTISIG_TYPE_HASH.clone())
-            .from_matches_opt(m, "from-locked-address", false)?;
-        let to_capacity: u64 = CapacityParser.from_matches(m, "capacity")?;
-        let tx_fee: u64 = CapacityParser.from_matches(m, "tx-fee")?;
-        let receiving_address_length: u32 =
-            FromStrParser::<u32>::default().from_matches(m, "derive-receiving-address-length")?;
+            .parse(&to_address)?;
+        let to_data = to_data.unwrap_or_default();
 
-        let last_change_address_opt: Option<Address> = AddressParser::default()
-            .set_network(network_type)
-            .from_matches_opt(m, "derive-change-address", false)?;
-
-        let (from_address_payload, password) = if let Some(from_privkey) = from_privkey_opt.as_ref()
-        {
+        let (from_address_payload, password) = if let Some(from_privkey) = from_privkey.as_ref() {
             let from_pubkey = secp256k1::PublicKey::from_secret_key(&SECP256K1, from_privkey);
-            (AddressPayload::from_pubkey(&from_pubkey), String::new())
+            (AddressPayload::from_pubkey(&from_pubkey), None)
         } else {
-            let password = read_password(false, None)?;
+            let password = if let Some(password) = password {
+                Some(password)
+            } else if self.plugin_mgr.keystore_require_password() {
+                Some(read_password(false, None)?)
+            } else {
+                None
+            };
             (
-                AddressPayload::from_pubkey_hash(from_account_opt.clone().unwrap()),
+                AddressPayload::from_pubkey_hash(from_account.unwrap()),
                 password,
             )
         };
         let from_address = Address::new(network_type, from_address_payload.clone());
 
-        let to_address: Address = AddressParser::default()
-            .set_network(network_type)
-            .from_matches(m, "to-address")?;
-
-        if let Some(from_locked_address) = from_locked_address_opt.as_ref() {
+        if let Some(from_locked_address) = from_locked_address.as_ref() {
             let args = from_locked_address.payload().args();
             let err_prefix = "Invalid from-locked-address's args";
             if args.len() != 28 {
@@ -231,7 +282,6 @@ impl<'a> WalletSubCommand<'a> {
         {
             return Err(format!("Invalid to-address: {}", to_address));
         }
-        let to_data = get_to_data(m)?;
         check_capacity(to_capacity, to_data.len())?;
 
         let genesis_info = self.genesis_info()?;
@@ -248,31 +298,36 @@ impl<'a> WalletSubCommand<'a> {
 
         let from_lock_arg = H160::from_slice(from_address.payload().args().as_ref()).unwrap();
         let mut path_map: HashMap<H160, DerivationPath> = Default::default();
-        let change_address_payload = if let Some(last_change_address) = last_change_address_opt {
-            // Behave like HD wallet
-            let change_last =
-                H160::from_slice(last_change_address.payload().args().as_ref()).unwrap();
-            let key_set = self
-                .key_store
-                .derived_key_set_with_password(
-                    &from_lock_arg,
-                    password.as_bytes(),
+        let (change_address_payload, change_path) =
+            if let Some(last_change_address) = last_change_address_opt {
+                // Behave like HD wallet
+                let change_last =
+                    H160::from_slice(last_change_address.payload().args().as_ref()).unwrap();
+                let key_set = self.plugin_mgr.keystore_handler().derived_key_set(
+                    from_lock_arg.clone(),
                     receiving_address_length,
-                    &change_last,
+                    change_last.clone(),
                     DERIVE_CHANGE_ADDRESS_MAX_LEN,
+                    None,
+                )?;
+                let mut change_path_opt = None;
+                for (path, hash160) in key_set.external.iter().chain(key_set.change.iter()) {
+                    if hash160 == &change_last {
+                        change_path_opt = Some(path.clone());
+                    }
+                    path_map.insert(hash160.clone(), path.clone());
+                    let payload = AddressPayload::from_pubkey_hash(hash160.clone());
+                    lock_hashes.push(Script::from(&payload).calc_script_hash());
+                }
+                (
+                    last_change_address.payload().clone(),
+                    change_path_opt.expect("change path not exists"),
                 )
-                .map_err(|err| err.to_string())?;
-            for (path, hash160) in key_set.external.iter().chain(key_set.change.iter()) {
-                path_map.insert(hash160.clone(), path.clone());
-                let payload = AddressPayload::from_pubkey_hash(hash160.clone());
-                lock_hashes.push(Script::from(&payload).calc_script_hash());
-            }
-            last_change_address.payload().clone()
-        } else {
-            from_address.payload().clone()
-        };
+            } else {
+                (from_address.payload().clone(), DerivationPath::empty())
+            };
 
-        if let Some(from_locked_address) = from_locked_address_opt.as_ref() {
+        if let Some(from_locked_address) = from_locked_address.as_ref() {
             lock_hashes.insert(
                 0,
                 Script::from(from_locked_address.payload()).calc_script_hash(),
@@ -312,6 +367,9 @@ impl<'a> WalletSubCommand<'a> {
                 (false, false)
             }
         };
+        if self.wait_for_sync {
+            sync_to_tip(&self.index_controller)?;
+        }
         if let Err(err) = with_index_db(&index_dir, genesis_hash.unpack(), |backend, cf| {
             IndexDatabase::from_db(backend, cf, network_type, genesis_info_clone, false)
                 .map(|db| {
@@ -343,7 +401,8 @@ impl<'a> WalletSubCommand<'a> {
             return Err("Transaction fee can not be more than 1.0 CKB, please change to-capacity value to adjust".to_string());
         }
 
-        let key_store = self.key_store.clone();
+        let rpc_url = self.rpc_client.url().to_string();
+        let keystore = self.plugin_mgr.keystore_handler();
         let mut live_cell_cache: HashMap<(OutPoint, bool), (CellOutput, Bytes)> =
             Default::default();
         let mut get_live_cell_fn = |out_point: OutPoint, with_data: bool| {
@@ -351,11 +410,42 @@ impl<'a> WalletSubCommand<'a> {
                 .map(|(output, _)| output)
         };
         for info in &infos {
-            helper.add_input(info.out_point(), None, &mut get_live_cell_fn, &genesis_info)?;
+            helper.add_input(
+                info.out_point(),
+                None,
+                &mut get_live_cell_fn,
+                &genesis_info,
+                skip_check,
+            )?;
         }
+
+        // Add outputs
+        let type_script = if is_type_id {
+            let mut blake2b = new_blake2b();
+            let first_cell_input = helper
+                .transaction()
+                .inputs()
+                .into_iter()
+                .next()
+                .expect("inputs empty");
+            blake2b.update(first_cell_input.as_slice());
+            blake2b.update(&0u64.to_le_bytes());
+            let mut ret = [0; 32];
+            blake2b.finalize(&mut ret);
+            Some(
+                Script::new_builder()
+                    .code_hash(TYPE_ID_CODE_HASH.pack())
+                    .hash_type(ScriptHashType::Type.into())
+                    .args(Bytes::from(ret[..].to_vec()).pack())
+                    .build(),
+            )
+        } else {
+            None
+        };
         let to_output = CellOutput::new_builder()
             .capacity(Capacity::shannons(to_capacity).pack())
             .lock(to_address.payload().into())
+            .type_(ScriptOpt::new_builder().set(type_script).build())
             .build();
         helper.add_output(to_output, to_data);
         if rest_capacity >= MIN_SECP_CELL_CAPACITY {
@@ -366,51 +456,157 @@ impl<'a> WalletSubCommand<'a> {
             helper.add_output(change_output, Bytes::default());
         }
 
-        let signer = if let Some(from_privkey) = from_privkey_opt {
+        let signer = if let Some(from_privkey) = from_privkey {
             get_privkey_signer(from_privkey)
         } else {
-            get_keystore_signer(key_store, path_map, from_lock_arg, password)
+            let new_client = HttpRpcClient::new(rpc_url);
+            get_keystore_signer(
+                keystore,
+                new_client,
+                change_path,
+                path_map,
+                from_lock_arg,
+                password,
+            )
         };
-        for (lock_arg, signature) in helper.sign_inputs(signer, &mut get_live_cell_fn)? {
+        for (lock_arg, signature) in
+            helper.sign_inputs(signer, &mut get_live_cell_fn, skip_check)?
+        {
             helper.add_signature(lock_arg, signature)?;
         }
-        let tx = helper.build_tx(&mut get_live_cell_fn)?;
-        self.send_transaction(tx, format, color, debug)
+        let tx = helper.build_tx(&mut get_live_cell_fn, skip_check)?;
+        let tx_hash = self
+            .rpc_client
+            .send_transaction(tx.data())
+            .map_err(|err| format!("Send transaction error: {}", err))?;
+        assert_eq!(tx.hash(), tx_hash.pack());
+        Ok(tx)
     }
 
-    fn send_transaction(
-        &mut self,
-        transaction: TransactionView,
-        format: OutputFormat,
-        color: bool,
-        debug: bool,
-    ) -> Result<String, String> {
-        let transaction_view: ckb_jsonrpc_types::TransactionView = transaction.clone().into();
-        if debug {
-            println!(
-                "[Send Transaction]:\n{}",
-                transaction_view.render(format, color)
-            );
-        }
+    pub fn get_capacity(&mut self, lock_hashes: Vec<Byte32>) -> Result<(u64, u64, u64), String> {
+        let max_mature_number = get_max_mature_number(self.rpc_client)?;
+        self.with_db(|db| {
+            let mut total_capacity = 0;
+            let mut dao_capacity = 0;
+            let mut immature_capacity = 0;
+            let mut terminator = |_idx: usize, info: &LiveCellInfo| {
+                if !is_mature(info, max_mature_number) {
+                    immature_capacity += info.capacity;
+                }
+                if info
+                    .type_hashes
+                    .as_ref()
+                    .filter(|(code_hash, _)| code_hash == &DAO_TYPE_HASH)
+                    .is_some()
+                {
+                    dao_capacity += info.capacity;
+                }
+                total_capacity += info.capacity;
+                (false, false)
+            };
+            for lock_hash in lock_hashes {
+                let _ = db.get_live_cells_by_lock(lock_hash, None, &mut terminator);
+            }
+            (total_capacity, immature_capacity, dao_capacity)
+        })
+    }
 
-        let resp = self
-            .rpc_client
-            .send_transaction(transaction.data())
-            .map_err(|err| format!("Send transaction error: {}", err))?;
-        Ok(resp.render(format, color))
+    pub fn get_live_cells<F>(
+        &mut self,
+        to_number: u64,
+        limit: usize,
+        mut func: F,
+        fast_mode: bool,
+    ) -> Result<(LiveCells, Option<(u32, u64)>), String>
+    where
+        F: FnMut(
+            &IndexDatabase,
+            &mut dyn FnMut(usize, &LiveCellInfo) -> (bool, bool),
+        ) -> Vec<LiveCellInfo>,
+    {
+        let (infos, total_count, total_capacity, current_count, current_capacity) =
+            self.with_db(|db| {
+                let mut total_count: u32 = 0;
+                let mut total_capacity: u64 = 0;
+                let mut current_count: u32 = 0;
+                let mut current_capacity: u64 = 0;
+                let mut terminator = |idx, info: &LiveCellInfo| {
+                    let stop = idx >= limit || info.number > to_number;
+                    let push_info = !stop;
+                    total_count += 1;
+                    total_capacity += info.capacity;
+                    if push_info {
+                        current_count += 1;
+                        current_capacity += info.capacity;
+                    }
+                    (fast_mode && stop, push_info)
+                };
+                let infos = func(&db, &mut terminator);
+                (
+                    infos,
+                    total_count,
+                    total_capacity,
+                    current_count,
+                    current_capacity,
+                )
+            })?;
+
+        let max_mature_number = get_max_mature_number(self.rpc_client)?;
+        let live_cells = infos
+            .into_iter()
+            .map(|info| {
+                let mature = is_mature(&info, max_mature_number);
+                LiveCell { info, mature }
+            })
+            .collect::<Vec<_>>();
+        let total = if fast_mode {
+            None
+        } else {
+            Some((total_count, total_capacity))
+        };
+        Ok((
+            LiveCells {
+                live_cells,
+                current_count,
+                current_capacity,
+            },
+            total,
+        ))
     }
 }
 
 impl<'a> CliSubCommand for WalletSubCommand<'a> {
-    fn process(
-        &mut self,
-        matches: &ArgMatches,
-        format: OutputFormat,
-        color: bool,
-        debug: bool,
-    ) -> Result<String, String> {
+    fn process(&mut self, matches: &ArgMatches, debug: bool) -> Result<Output, String> {
         match matches.subcommand() {
-            ("transfer", Some(m)) => self.transfer(m, format, color, debug),
+            ("transfer", Some(m)) => {
+                let to_data = get_to_data(m)?;
+                let args = TransferArgs {
+                    privkey_path: m.value_of("privkey-path").map(|s| s.to_string()),
+                    from_account: m.value_of("from-account").map(|s| s.to_string()),
+                    from_locked_address: m.value_of("from-locked-address").map(|s| s.to_string()),
+                    password: None,
+                    capacity: get_arg_value(m, "capacity")?,
+                    tx_fee: get_arg_value(m, "tx-fee")?,
+                    derive_receiving_address_length: Some(get_arg_value(
+                        m,
+                        "derive-receiving-address-length",
+                    )?),
+                    derive_change_address: m
+                        .value_of("derive-change-address")
+                        .map(|s| s.to_string()),
+                    to_address: get_arg_value(m, "to-address")?,
+                    to_data: Some(to_data),
+                    is_type_id: m.is_present("type-id"),
+                };
+                let tx = self.transfer(args, false)?;
+                if debug {
+                    let rpc_tx_view = json_types::TransactionView::from(tx);
+                    Ok(Output::new_output(rpc_tx_view))
+                } else {
+                    let tx_hash: H256 = tx.hash().unpack();
+                    Ok(Output::new_output(tx_hash))
+                }
+            }
             ("get-capacity", Some(m)) => {
                 let lock_hash_opt: Option<H256> =
                     FixedHashParser::<H256>::default().from_matches_opt(m, "lock-hash", false)?;
@@ -434,19 +630,19 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                     };
                     let mut lock_hashes = vec![Script::from(&address_payload).calc_script_hash()];
                     if m.is_present("derived") {
-                        let password = read_password(false, None)?;
                         let lock_arg = H160::from_slice(address_payload.args().as_ref()).unwrap();
+
                         let key_set = self
-                            .key_store
-                            .derived_key_set_by_index_with_password(
-                                &lock_arg,
-                                password.as_bytes(),
+                            .plugin_mgr
+                            .keystore_handler()
+                            .derived_key_set_by_index(
+                                lock_arg,
                                 0,
                                 receiving_address_length,
                                 0,
                                 change_address_length,
-                            )
-                            .map_err(|err| err.to_string())?;
+                                None,
+                            )?;
                         for (_, hash160) in key_set.external.iter().chain(key_set.change.iter()) {
                             let payload = AddressPayload::from_pubkey_hash(hash160.clone());
                             lock_hashes.push(Script::from(&payload).calc_script_hash());
@@ -455,55 +651,20 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                     lock_hashes
                 };
 
-                let max_mature_number = get_max_mature_number(self.rpc_client)?;
-                let (total_capacity, immature_capacity, free_capacity, dao_capacity) = self
-                    .with_db(|db| {
-                        let mut total_capacity = 0;
-                        let mut free_capacity = 0;
-                        let mut dao_capacity = 0;
-                        let mut immature_capacity = 0;
-                        let mut terminator = |_idx: usize, info: &LiveCellInfo| {
-                            if !is_mature(info, max_mature_number) {
-                                immature_capacity += info.capacity;
-                            }
-                            if info
-                                .type_hashes
-                                .as_ref()
-                                .filter(|(code_hash, _)| code_hash == &DAO_TYPE_HASH)
-                                .is_some()
-                            {
-                                dao_capacity += info.capacity;
-                            } else {
-                                free_capacity += info.capacity;
-                            }
-                            total_capacity += info.capacity;
-                            (false, false)
-                        };
-                        for lock_hash in lock_hashes {
-                            let _ = db.get_live_cells_by_lock(lock_hash, None, &mut terminator);
-                        }
-                        (
-                            total_capacity,
-                            immature_capacity,
-                            free_capacity,
-                            dao_capacity,
-                        )
-                    })?;
+                let (total, immature, dao) = self.get_capacity(lock_hashes)?;
 
-                let mut resp = serde_json::json!({
-                    "total": format!("{:#}", HumanCapacity::from(total_capacity))
-                });
-                if immature_capacity > 0 {
+                let mut resp =
+                    serde_json::json!({ "total": format!("{:#}", HumanCapacity::from(total)) });
+                if immature > 0 {
                     resp["immature"] =
-                        serde_json::json!(format!("{:#}", HumanCapacity::from(immature_capacity)));
+                        serde_json::json!(format!("{:#}", HumanCapacity::from(immature)));
                 }
-                if dao_capacity > 0 {
-                    resp["dao"] =
-                        serde_json::json!(format!("{:#}", HumanCapacity::from(dao_capacity)));
-                    resp["free"] =
-                        serde_json::json!(format!("{:#}", HumanCapacity::from(free_capacity)));
+                if dao > 0 {
+                    let free = total - dao;
+                    resp["dao"] = serde_json::json!(format!("{:#}", HumanCapacity::from(dao)));
+                    resp["free"] = serde_json::json!(format!("{:#}", HumanCapacity::from(free)));
                 }
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("get-live-cells", Some(m)) => {
                 let lock_hash_opt: Option<H256> =
@@ -517,6 +678,7 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                     FromStrParser::<u64>::default().from_matches_opt(m, "from", false)?;
                 let to_number_opt: Option<u64> =
                     FromStrParser::<u64>::default().from_matches_opt(m, "to", false)?;
+                let fast_mode = m.is_present("fast-mode");
 
                 let network_type = get_network_type(self.rpc_client)?;
                 let lock_hash_opt = if lock_hash_opt.is_none() {
@@ -536,30 +698,24 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                 }
 
                 let to_number = to_number_opt.unwrap_or(std::u64::MAX);
-                let (infos, total_count, total_capacity, current_count, current_capacity) = self
-                    .with_db(|db| {
-                        let mut total_count: u32 = 0;
-                        let mut total_capacity: u64 = 0;
-                        let mut current_count: u32 = 0;
-                        let mut current_capacity: u64 = 0;
-                        let terminator = |idx, info: &LiveCellInfo| {
-                            let stop = idx >= limit || info.number > to_number;
-                            let push_info = !stop;
-                            total_count += 1;
-                            total_capacity += info.capacity;
-                            if push_info {
-                                current_count += 1;
-                                current_capacity += info.capacity;
-                            }
-                            (false, push_info)
-                        };
-                        let infos = if let Some(lock_hash) = lock_hash_opt {
+                let (
+                    LiveCells {
+                        live_cells,
+                        current_count,
+                        current_capacity,
+                    },
+                    total,
+                ) = self.get_live_cells(
+                    to_number,
+                    limit,
+                    |db, terminator| {
+                        if let Some(lock_hash) = &lock_hash_opt {
                             db.get_live_cells_by_lock(
                                 lock_hash.clone().pack(),
                                 from_number_opt,
                                 terminator,
                             )
-                        } else if let Some(type_hash) = type_hash_opt {
+                        } else if let Some(type_hash) = &type_hash_opt {
                             db.get_live_cells_by_type(
                                 type_hash.clone().pack(),
                                 from_number_opt,
@@ -571,32 +727,31 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                                 from_number_opt,
                                 terminator,
                             )
-                        };
-                        (
-                            infos,
-                            total_count,
-                            total_capacity,
-                            current_count,
-                            current_capacity,
-                        )
-                    })?;
-                let max_mature_number = get_max_mature_number(self.rpc_client)?;
-                let resp = serde_json::json!({
-                    "live_cells": infos.into_iter().map(|info| {
+                        }
+                    },
+                    fast_mode,
+                )?;
+                let mut resp = serde_json::json!({
+                    "live_cells": live_cells.into_iter().map(|live_cell| {
+                        let LiveCell{ info, mature } = live_cell;
                         let mut value = serde_json::to_value(&info).unwrap();
-                        let mature = serde_json::Value::Bool(is_mature(&info, max_mature_number));
+                        let mature = serde_json::Value::Bool(mature);
                         let capacity_string = serde_json::Value::String(format!("{:#}", HumanCapacity::from(info.capacity)));
                         let map = value.as_object_mut().unwrap();
                         map.insert("capacity".to_string(), capacity_string);
                         map.insert("mature".to_string(), mature);
                         value
                     }).collect::<Vec<_>>(),
-                    "total_capacity": format!("{:#}", HumanCapacity::from(total_capacity)),
-                    "current_capacity": format!("{:#}", HumanCapacity::from(current_capacity)),
-                    "total_count": total_count,
                     "current_count": current_count,
+                    "current_capacity": format!("{:#}", HumanCapacity::from(current_capacity)),
                 });
-                Ok(resp.render(format, color))
+                if let Some((total_count, total_capacity)) = total {
+                    resp["total_count"] = serde_json::json!(total_count);
+                    resp["total_capacity"] =
+                        serde_json::json!(format!("{:#}", HumanCapacity::from(total_capacity)));
+                }
+
+                Ok(Output::new_output(resp))
             }
             ("top-capacity", Some(m)) => {
                 let n: usize = m
@@ -616,47 +771,108 @@ impl<'a> CliSubCommand for WalletSubCommand<'a> {
                         })
                         .collect::<Vec<_>>()
                 })?;
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("db-metrics", _) => {
                 let metrcis = self.with_db(|db| db.get_metrics(None))?;
                 let resp = serde_json::to_value(metrcis).map_err(|err| err.to_string())?;
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
-            _ => Err(matches.usage().to_owned()),
+            _ => Err(Self::subcommand().generate_usage()),
         }
     }
 }
 
 fn get_keystore_signer(
-    key_store: KeyStore,
+    keystore: KeyStoreHandler,
+    mut client: HttpRpcClient,
+    change_path: DerivationPath,
     path_map: HashMap<H160, DerivationPath>,
     account: H160,
-    password: String,
+    password: Option<String>,
 ) -> SignerFn {
-    Box::new(move |lock_args: &HashSet<H160>, message: &H256| {
-        let path = if lock_args.contains(&account) {
-            None
-        } else {
-            let mut path_opt = None;
-            for lock_arg in lock_args {
-                if let Some(path) = path_map.get(lock_arg) {
-                    path_opt = Some(path);
-                    break;
+    Box::new(
+        move |lock_args: &HashSet<H160>, message: &H256, tx: &json_types::Transaction| {
+            let path: &[_] = if lock_args.contains(&account) {
+                &[]
+            } else {
+                match lock_args.iter().find_map(|lock_arg| path_map.get(lock_arg)) {
+                    None => return Ok(None),
+                    Some(path) => path.as_ref(),
                 }
+            };
+            if message == &h256!("0x0") {
+                return Ok(Some([0u8; 65]));
             }
-            if path_opt.is_none() {
-                return Ok(None);
+            let sign_target = if keystore.has_account_in_default(account.clone())? {
+                SignTarget::AnyData(Default::default())
+            } else {
+                let inputs = tx
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        let tx_hash = &input.previous_output.tx_hash;
+                        client
+                            .get_transaction(tx_hash.clone())?
+                            .map(|tx_with_status| tx_with_status.transaction.inner)
+                            .map(packed::Transaction::from)
+                            .map(json_types::Transaction::from)
+                            .ok_or_else(|| format!("transaction not exists: {:x}", tx_hash))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                SignTarget::Transaction {
+                    tx: tx.clone(),
+                    inputs,
+                    change_path: change_path.to_string(),
+                }
+            };
+            let data = keystore.sign(
+                account.clone(),
+                path,
+                message.clone(),
+                sign_target,
+                password.clone(),
+                true,
+            )?;
+            if data.len() != 65 {
+                Err(format!(
+                    "Invalid signature data lenght: {}, data: {:?}",
+                    data.len(),
+                    data
+                ))
+            } else {
+                let mut data_bytes = [0u8; 65];
+                data_bytes.copy_from_slice(&data[..]);
+                Ok(Some(data_bytes))
             }
-            path_opt
-        };
-        if message == &h256!("0x0") {
-            return Ok(Some([0u8; 65]));
-        }
-        let signature = key_store
-            .sign_recoverable_with_password(&account, path, message, password.as_bytes())
-            .map_err(|err| err.to_string())?;
+        },
+    )
+}
 
-        Ok(Some(serialize_signature(&signature)))
-    })
+#[derive(Clone, Debug)]
+pub struct TransferArgs {
+    pub privkey_path: Option<String>,
+    pub from_account: Option<String>,
+    pub from_locked_address: Option<String>,
+    pub password: Option<String>,
+    pub derive_receiving_address_length: Option<String>,
+    pub derive_change_address: Option<String>,
+    pub capacity: String,
+    pub tx_fee: String,
+    pub to_address: String,
+    pub to_data: Option<Bytes>,
+    pub is_type_id: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LiveCells {
+    pub live_cells: Vec<LiveCell>,
+    pub current_count: u32,
+    pub current_capacity: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LiveCell {
+    pub info: LiveCellInfo,
+    pub mature: bool,
 }

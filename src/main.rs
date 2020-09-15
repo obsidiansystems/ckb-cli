@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::iter::FromIterator;
+use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 
@@ -10,17 +11,18 @@ use ckb_build_info::Version;
 use ckb_sdk::{rpc::RawHttpRpcClient, HttpRpcClient};
 use ckb_util::RwLock;
 use clap::crate_version;
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{App, AppSettings, Arg};
 #[cfg(unix)]
-use subcommands::TuiSubCommand;
+use subcommands::{Output, TuiSubCommand};
 
-use crate::utils::other::get_genesis_info;
 use interactive::InteractiveEnv;
+use plugin::PluginManager;
 use subcommands::{
-    start_index_thread, AccountSubCommand, CliSubCommand, DAOSubCommand, MockTxSubCommand,
-    MoleculeSubCommand, RpcSubCommand, TxSubCommand, UtilSubCommand, WalletSubCommand,
+    start_index_thread, AccountSubCommand, ApiServerSubCommand, CliSubCommand, DAOSubCommand,
+    MockTxSubCommand, MoleculeSubCommand, PluginSubCommand, RpcSubCommand, TxSubCommand,
+    UtilSubCommand, WalletSubCommand,
 };
-use utils::other::sync_to_tip;
+use utils::other::get_genesis_info;
 use utils::{
     arg_parser::{ArgParser, UrlParser},
     config::GlobalConfig,
@@ -30,6 +32,7 @@ use utils::{
 };
 
 mod interactive;
+mod plugin;
 mod subcommands;
 mod utils;
 
@@ -52,10 +55,24 @@ fn main() -> Result<(), io::Error> {
         .map(ToOwned::to_owned)
         .or_else(|| env_map.remove("API_URL"));
 
-    let mut ckb_cli_dir = dirs::home_dir().unwrap();
-    ckb_cli_dir.push(".ckb-cli");
-    let mut resource_dir = ckb_cli_dir.clone();
-    resource_dir.push("resource");
+    let ckb_cli_dir = if let Some(dir_string) = env_map.remove("CKB_CLI_HOME") {
+        let dir = PathBuf::from(dir_string.as_str());
+        if !dir.exists() {
+            fs::create_dir_all(&dir)?;
+        }
+        if dir.exists() && !dir.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a directory", dir_string),
+            ));
+        }
+        dir
+    } else {
+        let mut dir = dirs::home_dir().unwrap();
+        dir.push(".ckb-cli");
+        dir
+    };
+
     let mut index_dir = ckb_cli_dir.clone();
     index_dir.push(index_dirname());
     let index_state = Arc::new(RwLock::new(IndexThreadState::default()));
@@ -76,6 +93,7 @@ fn main() -> Result<(), io::Error> {
             }
         }
         config.set_debug(configs["debug"].as_bool().unwrap_or(false));
+        config.set_no_sync(configs["no-sync"].as_bool().unwrap_or(false));
         config.set_color(ansi_support && configs["color"].as_bool().unwrap_or(true));
         output_format =
             OutputFormat::from_str(&configs["output_format"].as_str().unwrap_or("yaml"))
@@ -88,99 +106,88 @@ fn main() -> Result<(), io::Error> {
     let api_uri = config.get_url().to_string();
     let index_controller = start_index_thread(api_uri.as_str(), index_dir.clone(), index_state);
     let mut rpc_client = HttpRpcClient::new(api_uri.clone());
-    let mut raw_rpc_client = RawHttpRpcClient::from_uri(api_uri.as_str());
+    let mut raw_rpc_client = RawHttpRpcClient::new(api_uri.as_str());
     check_alerts(&mut rpc_client);
     config.set_network(get_network_type(&mut rpc_client).ok());
 
     let color = ColorWhen::new(!matches.is_present("no-color")).color();
     let debug = matches.is_present("debug");
-
-    // When flag `--wait-for-sync` given, we have to ensure that the index-store synchronizes
-    // to the tip before executing the command.
-    let wait_for_sync = matches.is_present("wait-for-sync");
-    if wait_for_sync {
-        if let Err(err) = sync_to_tip(&index_controller) {
-            eprintln!("Synchronize error: {}", err);
-            process::exit(1);
-        }
-    }
+    let wait_for_sync = !matches.is_present("no-sync");
 
     if let Some(format) = matches.value_of("output-format") {
         output_format = OutputFormat::from_str(format).unwrap();
     }
+    let mut key_store = get_key_store(&ckb_cli_dir).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Open file based key store error: {}", err),
+        )
+    })?;
+    let mut plugin_mgr = PluginManager::init(&ckb_cli_dir, api_uri.clone()).unwrap();
     let result = match matches.subcommand() {
         #[cfg(unix)]
-        ("tui", _) => TuiSubCommand::new(
-            api_uri.to_string(),
-            index_dir.clone(),
+        ("tui", _) => TuiSubCommand::new(api_uri, index_dir, index_controller.clone())
+            .start()
+            .map(|s| Output::new_output(serde_json::json!(s))),
+        ("rpc", Some(sub_matches)) => {
+            RpcSubCommand::new(&mut rpc_client, &mut raw_rpc_client).process(&sub_matches, debug)
+        }
+        ("account", Some(sub_matches)) => {
+            AccountSubCommand::new(&mut plugin_mgr, &mut key_store).process(&sub_matches, debug)
+        }
+        ("mock-tx", Some(sub_matches)) => {
+            MockTxSubCommand::new(&mut rpc_client, &mut plugin_mgr, None)
+                .process(&sub_matches, debug)
+        }
+        ("tx", Some(sub_matches)) => {
+            TxSubCommand::new(&mut rpc_client, &mut plugin_mgr, None).process(&sub_matches, debug)
+        }
+        ("util", Some(sub_matches)) => {
+            UtilSubCommand::new(&mut rpc_client, &mut plugin_mgr).process(&sub_matches, debug)
+        }
+        ("server", Some(sub_matches)) => ApiServerSubCommand::new(
+            &mut rpc_client,
+            plugin_mgr,
+            None,
+            index_dir,
             index_controller.clone(),
         )
-        .start(),
-        ("rpc", Some(sub_matches)) => RpcSubCommand::new(&mut rpc_client, &mut raw_rpc_client)
-            .process(&sub_matches, output_format, color, debug),
-        ("account", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-            AccountSubCommand::new(&mut key_store).process(
-                &sub_matches,
-                output_format,
-                color,
-                debug,
-            )
-        }),
-        ("mock-tx", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-            MockTxSubCommand::new(&mut rpc_client, &mut key_store, None).process(
-                &sub_matches,
-                output_format,
-                color,
-                debug,
-            )
-        }),
-        ("tx", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-            TxSubCommand::new(&mut rpc_client, &mut key_store, None).process(
-                &sub_matches,
-                output_format,
-                color,
-                debug,
-            )
-        }),
-        ("util", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-            UtilSubCommand::new(&mut rpc_client, &mut key_store).process(
-                &sub_matches,
-                output_format,
-                color,
-                debug,
-            )
-        }),
-        ("molecule", Some(sub_matches)) => {
-            MoleculeSubCommand::new().process(&sub_matches, output_format, color, debug)
+        .process(&sub_matches, debug),
+        ("plugin", Some(sub_matches)) => {
+            PluginSubCommand::new(&mut plugin_mgr).process(&sub_matches, debug)
         }
-        ("wallet", Some(sub_matches)) => get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-            WalletSubCommand::new(
-                &mut rpc_client,
-                &mut key_store,
-                None,
-                index_dir.clone(),
-                index_controller.clone(),
-            )
-            .process(&sub_matches, output_format, color, debug)
-        }),
+        ("molecule", Some(sub_matches)) => MoleculeSubCommand::new().process(&sub_matches, debug),
+        ("wallet", Some(sub_matches)) => WalletSubCommand::new(
+            &mut rpc_client,
+            &mut plugin_mgr,
+            None,
+            index_dir,
+            index_controller.clone(),
+            wait_for_sync,
+        )
+        .process(&sub_matches, debug),
         ("dao", Some(sub_matches)) => {
             get_genesis_info(&None, &mut rpc_client).and_then(|genesis_info| {
-                get_key_store(&ckb_cli_dir).and_then(|mut key_store| {
-                    DAOSubCommand::new(
-                        &mut rpc_client,
-                        &mut key_store,
-                        genesis_info,
-                        index_dir.clone(),
-                        index_controller.clone(),
-                    )
-                    .process(&sub_matches, output_format, color, debug)
-                })
+                DAOSubCommand::new(
+                    &mut rpc_client,
+                    &mut plugin_mgr,
+                    genesis_info,
+                    index_dir.clone(),
+                    index_controller.clone(),
+                    wait_for_sync,
+                )
+                .process(&sub_matches, debug)
             })
         }
         _ => {
-            if let Err(err) =
-                InteractiveEnv::from_config(ckb_cli_dir, config, index_controller.clone())
-                    .and_then(|mut env| env.start())
+            if let Err(err) = InteractiveEnv::from_config(
+                ckb_cli_dir,
+                config,
+                plugin_mgr,
+                key_store,
+                index_controller.clone(),
+            )
+            .and_then(|mut env| env.start())
             {
                 eprintln!("Process error: {}", err);
                 index_controller.shutdown();
@@ -192,8 +199,8 @@ fn main() -> Result<(), io::Error> {
     };
 
     match result {
-        Ok(message) => {
-            println!("{}", message);
+        Ok(output) => {
+            output.print(output_format, color);
             index_controller.shutdown();
         }
         Err(err) => {
@@ -205,7 +212,7 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn get_version() -> Version {
+pub fn get_version() -> Version {
     let major = env!("CARGO_PKG_VERSION_MAJOR")
         .parse::<u8>()
         .expect("CARGO_PKG_VERSION_MAJOR parse success");
@@ -239,7 +246,7 @@ fn get_version() -> Version {
     }
 }
 
-pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, 'a> {
+pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a> {
     let app = App::new("ckb-cli")
         .version(version_short)
         .long_version(version_long)
@@ -249,7 +256,9 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
         .subcommand(AccountSubCommand::subcommand("account"))
         .subcommand(MockTxSubCommand::subcommand("mock-tx"))
         .subcommand(TxSubCommand::subcommand("tx"))
+        .subcommand(ApiServerSubCommand::subcommand("server"))
         .subcommand(UtilSubCommand::subcommand("util"))
+        .subcommand(PluginSubCommand::subcommand("plugin"))
         .subcommand(MoleculeSubCommand::subcommand("molecule"))
         .subcommand(WalletSubCommand::subcommand())
         .subcommand(DAOSubCommand::subcommand())
@@ -258,7 +267,7 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
                 .long("url")
                 .takes_value(true)
                 .validator(|input| UrlParser.validate(input))
-                .help("RPC API server url"),
+                .about("RPC API server url"),
         )
         .arg(
             Arg::with_name("output-format")
@@ -267,36 +276,44 @@ pub fn build_cli<'a>(version_short: &'a str, version_long: &'a str) -> App<'a, '
                 .possible_values(&["yaml", "json"])
                 .default_value("yaml")
                 .global(true)
-                .help("Select output format"),
+                .about("Select output format"),
         )
         .arg(
             Arg::with_name("no-color")
                 .long("no-color")
                 .global(true)
-                .help("Do not highlight(color) output json"),
+                .about("Do not highlight(color) output json"),
         )
         .arg(
             Arg::with_name("debug")
                 .long("debug")
                 .global(true)
-                .help("Display request parameters"),
+                .about("Display request parameters"),
         )
         .arg(
             Arg::with_name("wait-for-sync")
                 .long("wait-for-sync")
+                .conflicts_with("no-sync")
                 .global(true)
-                .help(
+                .about(
                     "Ensure the index-store synchronizes completely before command being executed",
                 ),
+        )
+        .arg(
+            Arg::with_name("no-sync")
+                .long("no-sync")
+                .conflicts_with("wait-for-sync")
+                .global(true)
+                .about("Don't wait index database sync to tip"),
         );
 
     #[cfg(unix)]
-    let app = app.subcommand(SubCommand::with_name("tui").about("Enter TUI mode"));
+    let app = app.subcommand(App::new("tui").about("Enter TUI mode"));
 
     app
 }
 
-pub fn build_interactive() -> App<'static, 'static> {
+pub fn build_interactive() -> App<'static> {
     App::new("interactive")
         .version(crate_version!())
         .global_setting(AppSettings::NoBinaryName)
@@ -304,24 +321,29 @@ pub fn build_interactive() -> App<'static, 'static> {
         .global_setting(AppSettings::DeriveDisplayOrder)
         .global_setting(AppSettings::DisableVersion)
         .subcommand(
-            SubCommand::with_name("config")
+            App::new("config")
                 .about("Config environment")
                 .arg(
                     Arg::with_name("url")
                         .long("url")
                         .validator(|input| UrlParser.validate(input))
                         .takes_value(true)
-                        .help("Config RPC API url"),
+                        .about("Config RPC API url"),
                 )
                 .arg(
                     Arg::with_name("color")
                         .long("color")
-                        .help("Switch color for rpc interface"),
+                        .about("Switch color for rpc interface"),
                 )
                 .arg(
                     Arg::with_name("debug")
                         .long("debug")
-                        .help("Switch debug mode"),
+                        .about("Switch debug mode"),
+                )
+                .arg(
+                    Arg::with_name("no-sync")
+                        .long("no-sync")
+                        .about("Switch whether wait index database sync to tip"),
                 )
                 .arg(
                     Arg::with_name("output-format")
@@ -329,22 +351,22 @@ pub fn build_interactive() -> App<'static, 'static> {
                         .takes_value(true)
                         .possible_values(&["yaml", "json"])
                         .default_value("yaml")
-                        .help("Select output format"),
+                        .about("Select output format"),
                 )
                 .arg(
                     Arg::with_name("completion_style")
                         .long("completion_style")
-                        .help("Switch completion style"),
+                        .about("Switch completion style"),
                 )
                 .arg(
                     Arg::with_name("edit_style")
                         .long("edit_style")
-                        .help("Switch edit style"),
+                        .about("Switch edit style"),
                 ),
         )
-        .subcommand(SubCommand::with_name("info").about("Display global variables"))
+        .subcommand(App::new("info").about("Display global variables"))
         .subcommand(
-            SubCommand::with_name("exit")
+            App::new("exit")
                 .visible_alias("quit")
                 .about("Exit the interactive interface"),
         )
@@ -353,6 +375,7 @@ pub fn build_interactive() -> App<'static, 'static> {
         .subcommand(MockTxSubCommand::subcommand("mock-tx"))
         .subcommand(TxSubCommand::subcommand("tx"))
         .subcommand(UtilSubCommand::subcommand("util"))
+        .subcommand(PluginSubCommand::subcommand("plugin"))
         .subcommand(MoleculeSubCommand::subcommand("molecule"))
         .subcommand(WalletSubCommand::subcommand())
         .subcommand(DAOSubCommand::subcommand())

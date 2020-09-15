@@ -6,14 +6,11 @@ use std::path::PathBuf;
 use ckb_hash::blake2b_256;
 use ckb_jsonrpc_types::{self as json_types, JsonBytes};
 use ckb_types::{bytes::Bytes, packed, prelude::*, H256};
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches};
 use serde_derive::{Deserialize, Serialize};
 
-use super::CliSubCommand;
-use crate::utils::{
-    arg_parser::{ArgParser, FilePathParser, HexParser},
-    printer::{OutputFormat, Printable},
-};
+use super::{CliSubCommand, Output};
+use crate::utils::arg_parser::{ArgParser, FilePathParser, HexParser};
 
 pub struct MoleculeSubCommand {}
 
@@ -22,18 +19,18 @@ impl MoleculeSubCommand {
         MoleculeSubCommand {}
     }
 
-    pub fn subcommand(name: &'static str) -> App<'static, 'static> {
+    pub fn subcommand(name: &'static str) -> App<'static> {
         let arg_type = Arg::with_name("type")
             .long("type")
             .takes_value(true)
             .required(true)
-            .help("The molecule type name defined in blockchain.mol (and extra OutPointVec)");
+            .about("The molecule type name defined in blockchain.mol (and extra OutPointVec)");
         let arg_binary_hex = Arg::with_name("binary-hex")
             .long("binary-hex")
             .takes_value(true)
             .required(true)
             .validator(|input| HexParser.validate(input))
-            .help("Binary data hex format");
+            .about("Binary data hex format");
 
         let arg_json_path = Arg::with_name("json-path")
             .long("json-path")
@@ -45,21 +42,21 @@ impl MoleculeSubCommand {
             .takes_value(true)
             .default_value("binary")
             .possible_values(&["binary", "hash"])
-            .help("Serialize output type");
+            .about("Serialize output type");
 
-        SubCommand::with_name(name)
+        App::new(name)
             .about("Molecule encode/decode utilities")
             .subcommands(vec![
-                SubCommand::with_name("decode")
+                App::new("decode")
                     .about("Decode molecule type from binary")
                     .arg(arg_type.clone())
                     .arg(arg_binary_hex.clone()),
-                SubCommand::with_name("encode")
+                App::new("encode")
                     .about("Encode molecule type from json to binary")
                     .arg(arg_type.clone())
                     .arg(arg_json_path.clone())
                     .arg(arg_serialize_output_type),
-                SubCommand::with_name("default")
+                App::new("default")
                     .about("Print default json structure of certain molecule type")
                     .arg(arg_type.clone())
                     .arg(
@@ -73,13 +70,7 @@ impl MoleculeSubCommand {
 }
 
 impl CliSubCommand for MoleculeSubCommand {
-    fn process(
-        &mut self,
-        matches: &ArgMatches,
-        format: OutputFormat,
-        color: bool,
-        _debug: bool,
-    ) -> Result<String, String> {
+    fn process(&mut self, matches: &ArgMatches, _debug: bool) -> Result<Output, String> {
         match matches.subcommand() {
             ("decode", Some(m)) => {
                 let type_name = m.value_of("type").unwrap();
@@ -87,12 +78,15 @@ impl CliSubCommand for MoleculeSubCommand {
                 match type_name {
                     "Uint32" => packed::Uint32::from_slice(&binary)
                         .map(|s| Unpack::<u32>::unpack(&s).to_string())
+                        .map(|s| Output::new_output(serde_json::json!(s)))
                         .map_err(|err| format!("Invalid data, error: {}", err)),
                     "Uint64" => packed::Uint64::from_slice(&binary)
                         .map(|s| Unpack::<u64>::unpack(&s).to_string())
+                        .map(|s| Output::new_output(serde_json::json!(s)))
                         .map_err(|err| format!("Invalid data, error: {}", err)),
                     "Uint128" => packed::Uint128::from_slice(&binary)
                         .map(|s| Unpack::<u128>::unpack(&s).to_string())
+                        .map(|s| Output::new_output(serde_json::json!(s)))
                         .map_err(|err| format!("Invalid data, error: {}", err)),
                     "Bytes" => decode_simple::<packed::Bytes>(&binary),
                     "BytesVec" => decode_simple::<packed::BytesVec>(&binary),
@@ -104,53 +98,33 @@ impl CliSubCommand for MoleculeSubCommand {
                     "CellDepVec" => decode_simple::<packed::CellDepVec>(&binary),
                     "CellInputVec" => decode_simple::<packed::CellInputVec>(&binary),
                     "CellOutputVec" => decode_simple::<packed::CellOutputVec>(&binary),
-                    "Script" => {
-                        decode_to_json::<packed::Script, json_types::Script>(&binary, format, color)
+                    "Script" => decode_to_json::<packed::Script, json_types::Script>(&binary),
+                    "OutPoint" => decode_to_json::<packed::OutPoint, json_types::OutPoint>(&binary),
+                    "CellInput" => {
+                        decode_to_json::<packed::CellInput, json_types::CellInput>(&binary)
                     }
-                    "OutPoint" => decode_to_json::<packed::OutPoint, json_types::OutPoint>(
-                        &binary, format, color,
-                    ),
-                    "CellInput" => decode_to_json::<packed::CellInput, json_types::CellInput>(
-                        &binary, format, color,
-                    ),
-                    "CellOutput" => decode_to_json::<packed::CellOutput, json_types::CellOutput>(
-                        &binary, format, color,
-                    ),
-                    "CellDep" => decode_to_json::<packed::CellDep, json_types::CellDep>(
-                        &binary, format, color,
-                    ),
-                    "RawTransaction" => decode_to_json::<packed::RawTransaction, RawTransaction>(
-                        &binary, format, color,
-                    ),
+                    "CellOutput" => {
+                        decode_to_json::<packed::CellOutput, json_types::CellOutput>(&binary)
+                    }
+                    "CellDep" => decode_to_json::<packed::CellDep, json_types::CellDep>(&binary),
+                    "RawTransaction" => {
+                        decode_to_json::<packed::RawTransaction, RawTransaction>(&binary)
+                    }
                     "Transaction" => {
-                        decode_to_json::<packed::Transaction, json_types::Transaction>(
-                            &binary, format, color,
-                        )
+                        decode_to_json::<packed::Transaction, json_types::Transaction>(&binary)
                     }
-                    "RawHeader" => {
-                        decode_to_json::<packed::RawHeader, RawHeader>(&binary, format, color)
-                    }
-                    "Header" => {
-                        decode_to_json::<packed::Header, json_types::Header>(&binary, format, color)
-                    }
+                    "RawHeader" => decode_to_json::<packed::RawHeader, RawHeader>(&binary),
+                    "Header" => decode_to_json::<packed::Header, json_types::Header>(&binary),
                     "UncleBlock" => {
-                        decode_to_json::<packed::WitnessArgs, WitnessArgs>(&binary, format, color)
+                        decode_to_json::<packed::UncleBlock, json_types::UncleBlock>(&binary)
                     }
-                    "Block" => {
-                        decode_to_json::<packed::WitnessArgs, WitnessArgs>(&binary, format, color)
-                    }
+                    "Block" => decode_to_json::<packed::Block, json_types::Block>(&binary),
                     "CellbaseWitness" => {
-                        decode_to_json::<packed::CellbaseWitness, CellbaseWitness>(
-                            &binary, format, color,
-                        )
+                        decode_to_json::<packed::CellbaseWitness, CellbaseWitness>(&binary)
                     }
-                    "WitnessArgs" => {
-                        decode_to_json::<packed::WitnessArgs, WitnessArgs>(&binary, format, color)
-                    }
+                    "WitnessArgs" => decode_to_json::<packed::WitnessArgs, WitnessArgs>(&binary),
                     // In extensions.mol
-                    "OutPointVec" => {
-                        decode_to_json::<packed::OutPointVec, OutPoints>(&binary, format, color)
-                    }
+                    "OutPointVec" => decode_to_json::<packed::OutPointVec, OutPoints>(&binary),
 
                     _ => Err(format!("Unsupported molecule type name: {}", type_name)),
                 }
@@ -191,11 +165,11 @@ impl CliSubCommand for MoleculeSubCommand {
                     "Header" => {
                         encode_from_json::<packed::Header, json_types::Header>(content.as_str())
                     }
-                    "UncleBlock" => {
-                        encode_from_json::<packed::WitnessArgs, WitnessArgs>(content.as_str())
-                    }
+                    "UncleBlock" => encode_from_json::<packed::UncleBlock, json_types::UncleBlock>(
+                        content.as_str(),
+                    ),
                     "Block" => {
-                        encode_from_json::<packed::WitnessArgs, WitnessArgs>(content.as_str())
+                        encode_from_json::<packed::Block, json_types::Block>(content.as_str())
                     }
                     "CellbaseWitness" => {
                         encode_from_json::<packed::CellbaseWitness, CellbaseWitness>(
@@ -214,11 +188,11 @@ impl CliSubCommand for MoleculeSubCommand {
 
                 let binary = binary_result?;
                 let output = match output_type {
-                    "binary" => format!("0x{}", hex_string(&binary).unwrap()),
-                    "hash" => format!("0x{}", hex_string(&blake2b_256(&binary)).unwrap()),
+                    "binary" => format!("0x{}", hex_string(&binary)),
+                    "hash" => format!("0x{}", hex_string(&blake2b_256(&binary))),
                     _ => panic!("Invalid output type"),
                 };
-                Ok(output)
+                Ok(Output::new_output(serde_json::Value::String(output)))
             }
             ("default", Some(m)) => {
                 let type_name = m.value_of("type").unwrap();
@@ -230,33 +204,28 @@ impl CliSubCommand for MoleculeSubCommand {
                     }
                 }
 
-                let color = if json_path.is_some() { false } else { color };
-                let json_string = match type_name {
-                    "Script" => json_types::Script::default().render(OutputFormat::Json, color),
-                    "OutPoint" => json_types::OutPoint::default().render(OutputFormat::Json, color),
-                    "CellInput" => {
-                        json_types::CellInput::default().render(OutputFormat::Json, color)
-                    }
+                let value = match type_name {
+                    "Script" => serde_json::to_value(json_types::Script::default()).unwrap(),
+                    "OutPoint" => serde_json::to_value(json_types::OutPoint::default()).unwrap(),
+                    "CellInput" => serde_json::to_value(json_types::CellInput::default()).unwrap(),
                     "CellOutput" => {
-                        json_types::CellOutput::default().render(OutputFormat::Json, color)
+                        serde_json::to_value(json_types::CellOutput::default()).unwrap()
                     }
-                    "CellDep" => json_types::CellDep::default().render(OutputFormat::Json, color),
-                    "RawTransaction" => RawTransaction::default().render(OutputFormat::Json, color),
+                    "CellDep" => serde_json::to_value(json_types::CellDep::default()).unwrap(),
+                    "RawTransaction" => serde_json::to_value(RawTransaction::default()).unwrap(),
                     "Transaction" => {
-                        json_types::Transaction::default().render(OutputFormat::Json, color)
+                        serde_json::to_value(json_types::Transaction::default()).unwrap()
                     }
-                    "RawHeader" => RawHeader::default().render(OutputFormat::Json, color),
-                    "Header" => json_types::Header::default().render(OutputFormat::Json, color),
+                    "RawHeader" => serde_json::to_value(RawHeader::default()).unwrap(),
+                    "Header" => serde_json::to_value(json_types::Header::default()).unwrap(),
                     "UncleBlock" => {
-                        json_types::UncleBlock::default().render(OutputFormat::Json, color)
+                        serde_json::to_value(json_types::UncleBlock::default()).unwrap()
                     }
-                    "Block" => json_types::Block::default().render(OutputFormat::Json, color),
-                    "CellbaseWitness" => {
-                        CellbaseWitness::default().render(OutputFormat::Json, color)
-                    }
-                    "WitnessArgs" => WitnessArgs::default().render(OutputFormat::Json, color),
+                    "Block" => serde_json::to_value(json_types::Block::default()).unwrap(),
+                    "CellbaseWitness" => serde_json::to_value(CellbaseWitness::default()).unwrap(),
+                    "WitnessArgs" => serde_json::to_value(WitnessArgs::default()).unwrap(),
                     // In extensions.mol
-                    "OutPointVec" => OutPoints::default().render(OutputFormat::Json, color),
+                    "OutPointVec" => serde_json::to_value(OutPoints::default()).unwrap(),
                     _ => {
                         return Err(format!("Unsupported molecule type name: {}", type_name));
                     }
@@ -264,25 +233,26 @@ impl CliSubCommand for MoleculeSubCommand {
                 if let Some(path) = json_path {
                     fs::File::create(path)
                         .map_err(|err| err.to_string())?
-                        .write_all(json_string.as_bytes())
+                        .write_all(serde_json::to_string_pretty(&value).unwrap().as_bytes())
                         .map_err(|err| err.to_string())?;
-                    Ok(String::from("DONE"))
+                    Ok(Output::new_success())
                 } else {
-                    Ok(json_string)
+                    Ok(Output::new_output(value))
                 }
             }
-            _ => Err(matches.usage().to_owned()),
+            _ => Err(Self::subcommand("molecule").generate_usage()),
         }
     }
 }
 
-fn decode_simple<T: Entity + Display>(binary: &[u8]) -> Result<String, String> {
+fn decode_simple<T: Entity + Display>(binary: &[u8]) -> Result<Output, String> {
     T::from_slice(binary)
         .map(|s| s.to_string())
+        .map(|s| Output::new_output(serde_json::json!(s)))
         .map_err(|err| err.to_string())
 }
 
-fn decode_to_json<T, J>(binary: &[u8], format: OutputFormat, color: bool) -> Result<String, String>
+fn decode_to_json<T, J>(binary: &[u8]) -> Result<Output, String>
 where
     T: Entity + Into<J>,
     J: serde::Serialize,
@@ -290,7 +260,7 @@ where
     let json: J = T::from_slice(&binary)
         .map(Into::into)
         .map_err(|err| err.to_string())?;
-    Ok(json.render(format, color))
+    Ok(Output::new_output(json))
 }
 
 fn encode_from_json<'a, T, J>(content: &'a str) -> Result<Bytes, String>

@@ -1,5 +1,5 @@
 use crate::subcommands::dao::util::{calculate_dao_maximum_withdraw, send_transaction};
-use crate::subcommands::{CliSubCommand, DAOSubCommand};
+use crate::subcommands::{CliSubCommand, DAOSubCommand, Output};
 use crate::utils::{
     arg,
     arg_parser::{
@@ -7,7 +7,6 @@ use crate::utils::{
         PrivkeyPathParser, PrivkeyWrapper,
     },
     other::{get_address, get_network_type},
-    printer::{OutputFormat, Printable},
 };
 use ckb_crypto::secp::SECP256K1;
 use ckb_sdk::{constants::SIGHASH_TYPE_HASH, Address, AddressPayload, NetworkType};
@@ -16,24 +15,18 @@ use ckb_types::{
     prelude::*,
     H160, H256,
 };
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches};
 use std::collections::HashSet;
 
 impl<'a> CliSubCommand for DAOSubCommand<'a> {
-    fn process(
-        &mut self,
-        matches: &ArgMatches,
-        format: OutputFormat,
-        color: bool,
-        debug: bool,
-    ) -> Result<String, String> {
+    fn process(&mut self, matches: &ArgMatches, debug: bool) -> Result<Output, String> {
         let network_type = get_network_type(&mut self.rpc_client)?;
         match matches.subcommand() {
             ("deposit", Some(m)) => {
                 self.transact_args = Some(TransactArgs::from_matches(m, network_type)?);
                 let capacity: u64 = CapacityParser.from_matches(m, "capacity")?;
                 let transaction = self.deposit(capacity)?;
-                send_transaction(self.rpc_client(), transaction, format, color, debug)
+                send_transaction(self.rpc_client(), transaction, debug)
             }
             ("prepare", Some(m)) => {
                 self.transact_args = Some(TransactArgs::from_matches(m, network_type)?);
@@ -42,7 +35,7 @@ impl<'a> CliSubCommand for DAOSubCommand<'a> {
                     return Err("Duplicated out-points".to_string());
                 }
                 let transaction = self.prepare(out_points)?;
-                send_transaction(self.rpc_client(), transaction, format, color, debug)
+                send_transaction(self.rpc_client(), transaction, debug)
             }
             ("withdraw", Some(m)) => {
                 self.transact_args = Some(TransactArgs::from_matches(m, network_type)?);
@@ -51,7 +44,7 @@ impl<'a> CliSubCommand for DAOSubCommand<'a> {
                     return Err("Duplicated out-points".to_string());
                 }
                 let transaction = self.withdraw(out_points)?;
-                send_transaction(self.rpc_client(), transaction, format, color, debug)
+                send_transaction(self.rpc_client(), transaction, debug)
             }
             ("query-deposited-cells", Some(m)) => {
                 let query_args = QueryArgs::from_matches(m, network_type)?;
@@ -64,7 +57,7 @@ impl<'a> CliSubCommand for DAOSubCommand<'a> {
                     }).collect::<Vec<_>>(),
                     "total_capacity": total_capacity,
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("query-prepared-cells", Some(m)) => {
                 let query_args = QueryArgs::from_matches(m, network_type)?;
@@ -84,34 +77,34 @@ impl<'a> CliSubCommand for DAOSubCommand<'a> {
                     }).collect::<Vec<_>>(),
                     "total_maximum_withdraw": total_maximum_withdraw,
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
-            _ => Err(matches.usage().to_owned()),
+            _ => Err(Self::subcommand().generate_usage()),
         }
     }
 }
 
 impl<'a> DAOSubCommand<'a> {
-    pub fn subcommand() -> App<'static, 'static> {
-        SubCommand::with_name("dao")
+    pub fn subcommand() -> App<'static> {
+        App::new("dao")
             .about("Deposit / prepare / withdraw / query NervosDAO balance (with local index) / key utils")
             .subcommands(vec![
-                SubCommand::with_name("deposit")
+                App::new("deposit")
                     .about("Deposit capacity into NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::capacity().required(true)),
-                SubCommand::with_name("prepare")
+                App::new("prepare")
                     .about("Prepare specified cells from NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::out_point().required(true).multiple(true)),
-                SubCommand::with_name("withdraw")
+                App::new("withdraw")
                     .about("Withdraw specified cells from NervosDAO")
                     .args(&TransactArgs::args())
                     .arg(arg::out_point().required(true).multiple(true)),
-                SubCommand::with_name("query-deposited-cells")
+                App::new("query-deposited-cells")
                     .about("Query NervosDAO deposited capacity by lock script hash or address")
                     .args(&QueryArgs::args()),
-                SubCommand::with_name("query-prepared-cells")
+                App::new("query-prepared-cells")
                     .about("Query NervosDAO prepared capacity by lock script hash or address")
                     .args(&QueryArgs::args())
             ])
@@ -142,7 +135,7 @@ impl QueryArgs {
         Ok(Self { lock_hash })
     }
 
-    fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    fn args<'a>() -> Vec<Arg<'a>> {
         vec![arg::lock_hash(), arg::address()]
     }
 }
@@ -156,7 +149,7 @@ impl TransactArgs {
             let payload = AddressPayload::from_pubkey(&pubkey);
             Address::new(network_type, payload)
         } else {
-            let account: Option<H160> = FixedHashParser::<H160>::default()
+            let account: H160 = FixedHashParser::<H160>::default()
                 .from_matches_opt(m, "from-account", false)
                 .or_else(|err| {
                     let result: Result<Option<Address>, String> = AddressParser::new_sighash()
@@ -168,8 +161,13 @@ impl TransactArgs {
                                 .map(|address| H160::from_slice(&address.payload().args()).unwrap())
                         })
                         .map_err(|_| format!("Invalid value for '--from-account': {}", err))
+                })?
+                .ok_or_else(|| {
+                    // It's a bug of clap, otherwise if <privkey-path> is not given <from-account> must required.
+                    // The bug only happen when put <tx-fee> before <out-point>.
+                    String::from("<privkey-path> or <from-account> is required!")
                 })?;
-            let payload = AddressPayload::from_pubkey_hash(account.clone().unwrap());
+            let payload = AddressPayload::from_pubkey_hash(account);
             Address::new(network_type, payload)
         };
         assert_eq!(address.payload().code_hash(), SIGHASH_TYPE_HASH.pack());
@@ -181,10 +179,10 @@ impl TransactArgs {
         })
     }
 
-    fn args<'a, 'b>() -> Vec<Arg<'a, 'b>> {
+    fn args<'a>() -> Vec<Arg<'a>> {
         vec![
-            arg::privkey_path().required_unless(arg::from_account().b.name),
-            arg::from_account().required_unless(arg::privkey_path().b.name),
+            arg::privkey_path().required_unless(arg::from_account().get_name()),
+            arg::from_account().required_unless(arg::privkey_path().get_name()),
             arg::tx_fee().required(true),
         ]
     }

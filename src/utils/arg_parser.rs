@@ -18,10 +18,8 @@ use url::Url;
 pub trait ArgParser<T> {
     fn parse(&self, input: &str) -> Result<T, String>;
 
-    fn validate(&self, input: String) -> Result<(), String> {
-        self.parse(&input)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+    fn validate(&self, input: &str) -> Result<(), String> {
+        self.parse(input).map(|_| ())
     }
 
     fn from_matches<R: From<T>>(&self, matches: &ArgMatches, name: &str) -> Result<R, String> {

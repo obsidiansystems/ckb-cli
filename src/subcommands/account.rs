@@ -1,68 +1,80 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use ckb_sdk::{
     wallet::{DerivationPath, Key, KeyStore, MasterPrivKey},
     Address, AddressPayload, NetworkType,
 };
 use ckb_types::{packed::Script, prelude::*, H160, H256};
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches};
 
-use super::CliSubCommand;
+use super::{CliSubCommand, Output};
+use crate::plugin::PluginManager;
 use crate::utils::{
+    arg::lock_arg,
     arg_parser::{
-        ArgParser, DurationParser, ExtendedPrivkeyPathParser, FilePathParser, FixedHashParser,
-        FromStrParser, PrivkeyPathParser, PrivkeyWrapper,
+        ArgParser, ExtendedPrivkeyPathParser, FilePathParser, FixedHashParser, FromStrParser,
+        PrivkeyPathParser, PrivkeyWrapper,
     },
     other::read_password,
-    printer::{OutputFormat, Printable},
 };
 
 pub struct AccountSubCommand<'a> {
+    plugin_mgr: &'a mut PluginManager,
     key_store: &'a mut KeyStore,
 }
 
 impl<'a> AccountSubCommand<'a> {
-    pub fn new(key_store: &'a mut KeyStore) -> AccountSubCommand<'a> {
-        AccountSubCommand { key_store }
+    pub fn new(
+        plugin_mgr: &'a mut PluginManager,
+        key_store: &'a mut KeyStore,
+    ) -> AccountSubCommand<'a> {
+        AccountSubCommand {
+            plugin_mgr,
+            key_store,
+        }
     }
 
-    pub fn subcommand(name: &'static str) -> App<'static, 'static> {
-        let arg_lock_arg = Arg::with_name("lock-arg")
-            .long("lock-arg")
-            .takes_value(true)
-            .validator(|input| FixedHashParser::<H160>::default().validate(input))
-            .required(true)
-            .help("The lock_arg (identifier) of the account");
+    pub fn subcommand(name: &'static str) -> App<'static> {
         let arg_privkey_path = Arg::with_name("privkey-path")
             .long("privkey-path")
             .takes_value(true);
         let arg_extended_privkey_path = Arg::with_name("extended-privkey-path")
             .long("extended-privkey-path")
             .takes_value(true)
-            .help("Extended private key path (include master private key and chain code)");
-        SubCommand::with_name(name)
+            .about("Extended private key path (include master private key and chain code)");
+        App::new(name)
             .about("Manage accounts")
             .subcommands(vec![
-                SubCommand::with_name("list").about("List all accounts"),
-                SubCommand::with_name("new").about("Create a new account and print related information."),
-                SubCommand::with_name("import")
+                App::new("list")
+                    .arg(
+                        Arg::with_name("only-mainnet-address")
+                            .long("only-mainnet-address")
+                            .about("Only show CKB mainnet address")
+                    )
+                    .arg(
+                        Arg::with_name("only-testnet-address")
+                            .long("only-testnet-address")
+                            .about("Only show CKB testnet address")
+                    )
+                    .about("List all accounts"),
+                App::new("new").about("Create a new account and print related information."),
+                App::new("import")
                     .about("Import an unencrypted private key from <privkey-path> and create a new account.")
                     .arg(
                         arg_privkey_path
                             .clone()
                             .required_unless("extended-privkey-path")
                             .validator(|input| PrivkeyPathParser.validate(input))
-                            .help("The privkey is assumed to contain an unencrypted private key in hexadecimal format. (only read first line)")
+                            .about("The privkey is assumed to contain an unencrypted private key in hexadecimal format. (only read first line)")
                     )
                     .arg(arg_extended_privkey_path
                          .clone()
                          .required_unless("privkey-path")
                          .validator(|input| ExtendedPrivkeyPathParser.validate(input))
                     ),
-                SubCommand::with_name("import-keystore")
+                App::new("import-keystore")
                     .about("Import key from encrypted keystore json file and create a new account.")
                     .arg(
                         Arg::with_name("path")
@@ -70,32 +82,24 @@ impl<'a> AccountSubCommand<'a> {
                             .takes_value(true)
                             .required(true)
                             .validator(|input| FilePathParser::new(true).validate(input))
-                            .help("The keystore file path (json format)")
+                            .about("The keystore file path (json format)")
                     ),
-                SubCommand::with_name("unlock")
-                    .about("Unlock an account")
-                    .arg(arg_lock_arg.clone())
-                    .arg(
-                        Arg::with_name("keep")
-                            .long("keep")
-                            .takes_value(true)
-                            .validator(|input| DurationParser.validate(input))
-                            .required(true)
-                            .help("How long before the key expired, format: 30s, 15m, 1h (repeat unlock will increase the time)")
-                    ),
-                SubCommand::with_name("update")
+                App::new("update")
                     .about("Update password of an account")
-                    .arg(arg_lock_arg.clone()),
-                SubCommand::with_name("export")
+                    .arg(lock_arg().required(true)),
+                App::new("upgrade")
+                    .about("Upgrade an account to latest json format")
+                    .arg(lock_arg().required(true)),
+                App::new("export")
                     .about("Export master private key and chain code as hex plain text (USE WITH YOUR OWN RISK)")
-                    .arg(arg_lock_arg.clone())
+                    .arg(lock_arg().required(true))
                     .arg(
                         arg_extended_privkey_path
                             .clone()
                             .required(true)
-                            .help("Output extended private key path (PrivKey + ChainCode)")
+                            .about("Output extended private key path (PrivKey + ChainCode)")
                     ),
-                SubCommand::with_name("bip44-addresses")
+                App::new("bip44-addresses")
                     .about("Extended receiving/change Addresses (see: BIP-44)")
                     .arg(
                         Arg::with_name("from-receiving-index")
@@ -103,7 +107,7 @@ impl<'a> AccountSubCommand<'a> {
                             .takes_value(true)
                             .default_value("0")
                             .validator(|input| FromStrParser::<u32>::default().validate(input))
-                            .help("Start from receiving path index")
+                            .about("Start from receiving path index")
                     )
                     .arg(
                         Arg::with_name("receiving-length")
@@ -111,7 +115,7 @@ impl<'a> AccountSubCommand<'a> {
                             .takes_value(true)
                             .default_value("20")
                             .validator(|input| FromStrParser::<u32>::default().validate(input))
-                            .help("Receiving addresses length")
+                            .about("Receiving addresses length")
                     )
                     .arg(
                         Arg::with_name("from-change-index")
@@ -119,7 +123,7 @@ impl<'a> AccountSubCommand<'a> {
                             .takes_value(true)
                             .default_value("0")
                             .validator(|input| FromStrParser::<u32>::default().validate(input))
-                            .help("Start from change path index")
+                            .about("Start from change path index")
                     )
                     .arg(
                         Arg::with_name("change-length")
@@ -127,69 +131,98 @@ impl<'a> AccountSubCommand<'a> {
                             .takes_value(true)
                             .default_value("10")
                             .validator(|input| FromStrParser::<u32>::default().validate(input))
-                            .help("Change addresses length")
+                            .about("Change addresses length")
                     )
-                    .arg(arg_lock_arg.clone()),
-                SubCommand::with_name("extended-address")
+                    .arg(
+                        Arg::with_name("network")
+                            .long("network")
+                            .takes_value(true)
+                            .default_value("mainnet")
+                            .possible_values(&["mainnet", "testnet"])
+                            .about("The network type")
+                    )
+                    .arg(lock_arg().required(true)),
+                App::new("extended-address")
                     .about("Extended address (see: BIP-44)")
-                    .arg(arg_lock_arg.clone())
+                    .arg(lock_arg().required(true))
                     .arg(
                         Arg::with_name("path")
                             .long("path")
                             .takes_value(true)
                             .validator(|input| FromStrParser::<DerivationPath>::new().validate(input))
-                            .help("The address path")
+                            .about("The address path")
                     ),
             ])
     }
 }
 
 impl<'a> CliSubCommand for AccountSubCommand<'a> {
-    fn process(
-        &mut self,
-        matches: &ArgMatches,
-        format: OutputFormat,
-        color: bool,
-        _debug: bool,
-    ) -> Result<String, String> {
+    fn process(&mut self, matches: &ArgMatches, _debug: bool) -> Result<Output, String> {
         match matches.subcommand() {
-            ("list", _) => {
+            ("list", Some(m)) => {
                 let mut accounts = self
-                    .key_store
-                    .get_accounts()
+                    .plugin_mgr
+                    .keystore_handler()
+                    .list_account()?
                     .iter()
-                    .map(|(address, filepath)| (address.clone(), filepath.clone()))
-                    .collect::<Vec<(H160, PathBuf)>>();
+                    .map(|(lock_arg, source)| (lock_arg.clone(), source.clone()))
+                    .collect::<Vec<(H160, String)>>();
+                // Sort by file path name
                 accounts.sort_by(|a, b| a.1.cmp(&b.1));
+                let only_mainnet_address = m.is_present("only-mainnet-address");
+                let only_testnet_address = m.is_present("only-testnet-address");
+                let partial_fields = only_mainnet_address || only_testnet_address;
                 let resp = accounts
                     .into_iter()
                     .enumerate()
-                    .map(|(idx, (lock_arg, _filepath))| {
+                    .map(|(idx, (lock_arg, source))| {
                         let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
                         let lock_hash: H256 = Script::from(&address_payload)
                             .calc_script_hash()
                             .unpack();
-                        serde_json::json!({
-                            "#": idx,
-                            "lock_arg": format!("{:#x}", lock_arg),
-                            "lock_hash": format!("{:#x}", lock_hash),
-                            "address": {
-                                "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                                "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
-                            },
-                        })
+                        if partial_fields {
+                            let key = format!("{:#x}", lock_arg);
+                            if only_mainnet_address {
+                                serde_json::json!({
+                                    key: Address::new(NetworkType::Mainnet, address_payload).to_string()
+                                })
+                            } else if only_testnet_address {
+                                serde_json::json!({
+                                    key: Address::new(NetworkType::Testnet, address_payload).to_string()
+                                })
+                            } else {
+                                unreachable!();
+                            }
+                        } else {
+                            let has_ckb_root = self.key_store.get_ckb_root(&lock_arg, false).is_some();
+                            serde_json::json!({
+                                "#": idx,
+                                "source": source,
+                                "lock_arg": format!("{:#x}", lock_arg),
+                                "lock_hash": format!("{:#x}", lock_hash),
+                                "has_ckb_root": has_ckb_root,
+                                "address": {
+                                    "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
+                                    "testnet": Address::new(NetworkType::Testnet, address_payload).to_string(),
+                                },
+                            })
+                        }
                     })
                     .collect::<Vec<_>>();
-                Ok(serde_json::json!(resp).render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("new", _) => {
-                println!("Your new account is locked with a password. Please give a password. Do not forget this password.");
+                eprintln!("Your new account is locked with a password. Please give a password. Do not forget this password.");
 
-                let pass = read_password(true, None)?;
+                let password = if self.plugin_mgr.keystore_require_password() {
+                    Some(read_password(false, None)?)
+                } else {
+                    None
+                };
                 let lock_arg = self
-                    .key_store
-                    .new_account(pass.as_bytes())
-                    .map_err(|err| err.to_string())?;
+                    .plugin_mgr
+                    .keystore_handler()
+                    .create_account(password)?;
                 let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
                 let lock_hash: H256 = Script::from(&address_payload).calc_script_hash().unpack();
                 let resp = serde_json::json!({
@@ -197,97 +230,112 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     "lock_hash": format!("{:#x}", lock_hash),
                     "address": {
                         "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                        "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
+                        "testnet": Address::new(NetworkType::Testnet, address_payload).to_string(),
                     },
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("import", Some(m)) => {
                 let secp_key: Option<PrivkeyWrapper> =
                     PrivkeyPathParser.from_matches_opt(m, "privkey-path", false)?;
-                let password = read_password(true, None)?;
-                let lock_arg = if let Some(secp_key) = secp_key {
-                    self.key_store
-                        .import_secp_key(&secp_key, password.as_bytes())
-                        .map_err(|err| err.to_string())?
+                let password = if self.plugin_mgr.keystore_require_password() {
+                    Some(read_password(false, None)?)
+                } else {
+                    None
+                };
+                let master_privkey = if let Some(secp_key) = secp_key {
+                    // Default chain code is [255u8; 32]
+                    let mut data = [255u8; 64];
+                    data[0..32].copy_from_slice(&secp_key[..]);
+                    MasterPrivKey::from_bytes(data).map_err(|err| err.to_string())?
                 } else {
                     let master_privkey: MasterPrivKey =
                         ExtendedPrivkeyPathParser.from_matches(m, "extended-privkey-path")?;
-                    let key = Key::new(master_privkey);
-                    self.key_store
-                        .import_key(&key, password.as_bytes())
-                        .map_err(|err| err.to_string())?
+                    master_privkey
                 };
+
+                let lock_arg = self
+                    .plugin_mgr
+                    .keystore_handler()
+                    .import_key(master_privkey, password)?;
                 let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
                 let resp = serde_json::json!({
                     "lock_arg": format!("{:x}", lock_arg),
                     "address": {
                         "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                        "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
+                        "testnet": Address::new(NetworkType::Testnet, address_payload).to_string(),
                     },
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("import-keystore", Some(m)) => {
                 let path: PathBuf = FilePathParser::new(true).from_matches(m, "path")?;
 
                 let old_password = read_password(false, Some("Decrypt password"))?;
-                let new_password = read_password(true, None)?;
+                let new_password = if self.plugin_mgr.keystore_require_password() {
+                    Some(read_password(false, None)?)
+                } else {
+                    None
+                };
                 let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
                 let data: serde_json::Value =
                     serde_json::from_str(&content).map_err(|err| err.to_string())?;
-                let lock_arg = self
-                    .key_store
-                    .import(&data, old_password.as_bytes(), new_password.as_bytes())
+                let master_privkey = Key::from_json(&data, old_password.as_bytes())
+                    .map(|key| key.master_privkey().clone())
                     .map_err(|err| err.to_string())?;
+
+                let lock_arg = self
+                    .plugin_mgr
+                    .keystore_handler()
+                    .import_key(master_privkey, new_password)?;
                 let address_payload = AddressPayload::from_pubkey_hash(lock_arg.clone());
                 let resp = serde_json::json!({
                     "lock_arg": format!("{:x}", lock_arg),
                     "address": {
                         "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                        "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
+                        "testnet": Address::new(NetworkType::Testnet, address_payload).to_string(),
                     },
                 });
-                Ok(resp.render(format, color))
-            }
-            ("unlock", Some(m)) => {
-                let lock_arg: H160 =
-                    FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
-                let keep: Duration = DurationParser.from_matches(m, "keep")?;
-                let password = read_password(false, None)?;
-                let lock_after = self
-                    .key_store
-                    .timed_unlock(&lock_arg, password.as_bytes(), keep)
-                    .map(|timeout| timeout.to_string())
-                    .map_err(|err| err.to_string())?;
-                let resp = serde_json::json!({
-                    "status": lock_after,
-                });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("update", Some(m)) => {
                 let lock_arg: H160 =
                     FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
                 let old_password = read_password(false, Some("Old password"))?;
                 let new_passsword = read_password(true, Some("New password"))?;
+                self.plugin_mgr.keystore_handler().update_password(
+                    lock_arg,
+                    old_password,
+                    new_passsword,
+                )?;
+                Ok(Output::new_success())
+            }
+            ("upgrade", Some(m)) => {
+                let lock_arg: H160 =
+                    FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
+                let password = read_password(false, None)?;
                 self.key_store
-                    .update(&lock_arg, old_password.as_bytes(), new_passsword.as_bytes())
+                    .upgrade(&lock_arg, password.as_bytes())
                     .map_err(|err| err.to_string())?;
-                Ok("success".to_owned())
+                Ok(Output::new_success())
             }
             ("export", Some(m)) => {
                 let lock_arg: H160 =
                     FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
                 let key_path = m.value_of("extended-privkey-path").unwrap();
-                let password = read_password(false, None)?;
+                let password = if self.plugin_mgr.keystore_require_password() {
+                    Some(read_password(false, None)?)
+                } else {
+                    None
+                };
 
                 if Path::new(key_path).exists() {
                     return Err(format!("File exists: {}", key_path));
                 }
                 let master_privkey = self
-                    .key_store
-                    .export_key(&lock_arg, password.as_bytes())
-                    .map_err(|err| err.to_string())?;
+                    .plugin_mgr
+                    .keystore_handler()
+                    .export_key(lock_arg, password)?;
                 let bytes = master_privkey.to_bytes();
                 let privkey = H256::from_slice(&bytes[0..32]).unwrap();
                 let chain_code = H256::from_slice(&bytes[32..64]).unwrap();
@@ -296,10 +344,13 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     .map_err(|err| err.to_string())?;
                 file.write(format!("{:x}", chain_code).as_bytes())
                     .map_err(|err| err.to_string())?;
-                Ok(format!(
-                    "Success exported account as extended privkey to: \"{}\", please use this file carefully",
-                    key_path
-                ))
+                let resp = serde_json::json!({
+                    "message": format!(
+                        "Success exported account as extended privkey to: \"{}\", please use this file carefully",
+                        key_path
+                    )
+                });
+                Ok(Output::new_error(resp))
             }
             ("bip44-addresses", Some(m)) => {
                 let lock_arg: H160 =
@@ -312,26 +363,30 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     FromStrParser::<u32>::default().from_matches(m, "from-change-index")?;
                 let change_length: u32 =
                     FromStrParser::<u32>::default().from_matches(m, "change-length")?;
+                let network = match m.value_of("network").expect("network argument") {
+                    "mainnet" => NetworkType::Mainnet,
+                    "testnet" => NetworkType::Testnet,
+                    _ => unreachable!(),
+                };
 
-                let password = read_password(false, None)?;
                 let key_set = self
-                    .key_store
-                    .derived_key_set_by_index_with_password(
-                        &lock_arg,
-                        password.as_bytes(),
+                    .plugin_mgr
+                    .keystore_handler()
+                    .derived_key_set_by_index(
+                        lock_arg,
                         from_receiving_index,
                         receiving_length,
                         from_change_index,
                         change_length,
-                    )
-                    .map_err(|err| err.to_string())?;
+                        None,
+                    )?;
                 let get_addresses = |set: &[(DerivationPath, H160)]| {
                     set.iter()
                         .map(|(path, hash160)| {
                             let payload = AddressPayload::from_pubkey_hash(hash160.clone());
                             serde_json::json!({
                                 "path": path.to_string(),
-                                "address": Address::new(NetworkType::Mainnet, payload).to_string(),
+                                "address": Address::new(network, payload).to_string(),
                             })
                         })
                         .collect::<Vec<_>>()
@@ -340,30 +395,35 @@ impl<'a> CliSubCommand for AccountSubCommand<'a> {
                     "receiving": get_addresses(&key_set.external),
                     "change": get_addresses(&key_set.change),
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
             ("extended-address", Some(m)) => {
                 let lock_arg: H160 =
                     FixedHashParser::<H160>::default().from_matches(m, "lock-arg")?;
-                let path: Option<DerivationPath> =
-                    FromStrParser::<DerivationPath>::new().from_matches_opt(m, "path", false)?;
+                let path: DerivationPath = FromStrParser::<DerivationPath>::new()
+                    .from_matches_opt(m, "path", false)?
+                    .unwrap_or_else(DerivationPath::empty);
 
-                let password = read_password(false, None)?;
+                let password = if self.plugin_mgr.keystore_require_password() {
+                    Some(read_password(false, None)?)
+                } else {
+                    None
+                };
                 let extended_pubkey = self
-                    .key_store
-                    .extended_pubkey_with_password(&lock_arg, path.as_ref(), password.as_bytes())
-                    .map_err(|err| err.to_string())?;
-                let address_payload = AddressPayload::from_pubkey(&extended_pubkey.public_key);
+                    .plugin_mgr
+                    .keystore_handler()
+                    .extended_pubkey(lock_arg, &path, password)?;
+                let address_payload = AddressPayload::from_pubkey(&extended_pubkey);
                 let resp = serde_json::json!({
                     "lock_arg": format!("{:#x}", H160::from_slice(address_payload.args().as_ref()).unwrap()),
                     "address": {
                         "mainnet": Address::new(NetworkType::Mainnet, address_payload.clone()).to_string(),
-                        "testnet": Address::new(NetworkType::Testnet, address_payload.clone()).to_string(),
+                        "testnet": Address::new(NetworkType::Testnet, address_payload).to_string(),
                     },
                 });
-                Ok(resp.render(format, color))
+                Ok(Output::new_output(resp))
             }
-            _ => Err(matches.usage().to_owned()),
+            _ => Err(Self::subcommand("account").generate_usage()),
         }
     }
 }

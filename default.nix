@@ -19,7 +19,7 @@
 , rustPackages ? rustOverlay.rustChannelOf {
     date = "2020-05-04";
     rustToolchain = ./rust-toolchain;
-    sha256 = "1x22rf6ahb4cniykfz3ml7w0hh226pcig154xbcf5cg7j4k72rig";
+    sha256 = "07mp7n4n3cmm37mv152frv7p9q58ahjw5k8gcq48vfczrgm5qgiy";
   }
 
 , gitignoreNix ? fetch (builtins.fromJSON (builtins.readFile ./nix/gitignore.nix/github.json))
@@ -40,5 +40,5 @@ in rustPlatform.buildRustPackage {
   verifyCargoDeps = true;
 
   # Cargo hash must be updated when Cargo.lock file changes.
-  cargoSha256 = "18839hi14ddxa38aplvvcfhzck1q1xyablaa01x6r8d391mrkvbi";
+  cargoSha256 = "039bvmi7ai5zd3k46jfr1r82sfn84x4hg7c34sxsncwifd8p5yc6";
 }

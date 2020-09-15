@@ -1,4 +1,5 @@
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use std::convert::TryFrom;
 
 pub use ckb_jsonrpc_types::{
     self as rpc_types, Byte32, DepType, JsonBytes, ProposalShortId, ScriptHashType, TxStatus,
@@ -49,6 +50,17 @@ impl From<Script> for packed::Script {
             .code_hash(code_hash.pack())
             .hash_type(hash_type.into())
             .build()
+    }
+}
+impl From<packed::Script> for Script {
+    fn from(input: packed::Script) -> Script {
+        Script {
+            code_hash: input.code_hash().unpack(),
+            args: JsonBytes::from_bytes(input.args().unpack()),
+            hash_type: core::ScriptHashType::try_from(input.hash_type())
+                .expect("checked data")
+                .into(),
+        }
     }
 }
 impl Serialize for Script {
@@ -115,6 +127,16 @@ impl From<CellOutput> for packed::CellOutput {
             .build()
     }
 }
+impl From<packed::CellOutput> for CellOutput {
+    fn from(input: packed::CellOutput) -> CellOutput {
+        let capacity: u64 = input.capacity().unpack();
+        CellOutput {
+            capacity: capacity.into(),
+            lock: input.lock().into(),
+            type_: input.type_().to_opt().map(Into::into),
+        }
+    }
+}
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 #[serde(deny_unknown_fields)]
@@ -137,6 +159,15 @@ impl From<OutPoint> for packed::OutPoint {
             .tx_hash(tx_hash.pack())
             .index(index.pack())
             .build()
+    }
+}
+impl From<packed::OutPoint> for OutPoint {
+    fn from(input: packed::OutPoint) -> OutPoint {
+        let index: u32 = input.index().unpack();
+        OutPoint {
+            tx_hash: input.tx_hash().unpack(),
+            index,
+        }
     }
 }
 
@@ -166,6 +197,15 @@ impl From<CellInput> for packed::CellInput {
             .build()
     }
 }
+impl From<packed::CellInput> for CellInput {
+    fn from(input: packed::CellInput) -> CellInput {
+        let since: u64 = input.since().unpack();
+        CellInput {
+            previous_output: input.previous_output().into(),
+            since: since.into(),
+        }
+    }
+}
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +232,16 @@ impl From<CellDep> for packed::CellDep {
             .out_point(out_point.into())
             .dep_type(dep_type.into())
             .build()
+    }
+}
+impl From<packed::CellDep> for CellDep {
+    fn from(input: packed::CellDep) -> Self {
+        CellDep {
+            out_point: input.out_point().into(),
+            dep_type: core::DepType::try_from(input.dep_type())
+                .expect("checked data")
+                .into(),
+        }
     }
 }
 
@@ -242,6 +292,24 @@ impl From<Transaction> for packed::Transaction {
             .raw(raw)
             .witnesses(witnesses.into_iter().map(Into::into).pack())
             .build()
+    }
+}
+impl From<packed::Transaction> for Transaction {
+    fn from(input: packed::Transaction) -> Self {
+        let raw = input.raw();
+        Self {
+            version: raw.version().unpack(),
+            cell_deps: raw.cell_deps().into_iter().map(Into::into).collect(),
+            header_deps: raw
+                .header_deps()
+                .into_iter()
+                .map(|d| Unpack::<H256>::unpack(&d))
+                .collect(),
+            inputs: raw.inputs().into_iter().map(Into::into).collect(),
+            outputs: raw.outputs().into_iter().map(Into::into).collect(),
+            outputs_data: raw.outputs_data().into_iter().map(Into::into).collect(),
+            witnesses: input.witnesses().into_iter().map(Into::into).collect(),
+        }
     }
 }
 
@@ -764,19 +832,101 @@ impl From<rpc_types::LockHashIndexState> for LockHashIndexState {
 //  net.rs
 // ========
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
-pub struct Node {
+pub struct LocalNode {
+    pub version: String,
+    pub node_id: String,
+    pub active: bool,
+    pub addresses: Vec<NodeAddress>,
+    pub protocols: Vec<LocalNodeProtocol>,
+    pub connections: Uint64,
+}
+impl From<rpc_types::LocalNode> for LocalNode {
+    fn from(json: rpc_types::LocalNode) -> LocalNode {
+        LocalNode {
+            version: json.version,
+            node_id: json.node_id,
+            active: json.active,
+            addresses: json.addresses.into_iter().map(Into::into).collect(),
+            protocols: json.protocols.into_iter().map(Into::into).collect(),
+            connections: json.connections.value(),
+        }
+    }
+}
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+pub struct LocalNodeProtocol {
+    pub id: Uint64,
+    pub name: String,
+    pub support_versions: Vec<String>,
+}
+impl From<rpc_types::LocalNodeProtocol> for LocalNodeProtocol {
+    fn from(json: rpc_types::LocalNodeProtocol) -> LocalNodeProtocol {
+        LocalNodeProtocol {
+            id: json.id.value(),
+            name: json.name,
+            support_versions: json.support_versions,
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+pub struct RemoteNode {
     pub version: String,
     pub node_id: String,
     pub addresses: Vec<NodeAddress>,
-    pub is_outbound: Option<bool>,
+    pub is_outbound: bool,
+    pub connected_duration: Uint64,
+    pub last_ping_duration: Option<Uint64>,
+    pub sync_state: Option<PeerSyncState>,
+    pub protocols: Vec<RemoteNodeProtocol>,
 }
-impl From<rpc_types::Node> for Node {
-    fn from(json: rpc_types::Node) -> Node {
-        Node {
+impl From<rpc_types::RemoteNode> for RemoteNode {
+    fn from(json: rpc_types::RemoteNode) -> RemoteNode {
+        RemoteNode {
             version: json.version,
             node_id: json.node_id,
             addresses: json.addresses.into_iter().map(Into::into).collect(),
             is_outbound: json.is_outbound,
+            connected_duration: json.connected_duration.value(),
+            last_ping_duration: json.last_ping_duration.map(|duration| duration.value()),
+            sync_state: json.sync_state.map(Into::into),
+            protocols: json.protocols.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+pub struct RemoteNodeProtocol {
+    pub id: Uint64,
+    pub version: String,
+}
+impl From<rpc_types::RemoteNodeProtocol> for RemoteNodeProtocol {
+    fn from(json: rpc_types::RemoteNodeProtocol) -> RemoteNodeProtocol {
+        RemoteNodeProtocol {
+            id: json.id.value(),
+            version: json.version,
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+pub struct PeerSyncState {
+    pub best_known_header_hash: Option<Byte32>,
+    pub best_known_header_number: Option<Uint64>,
+    pub last_common_header_hash: Option<Byte32>,
+    pub last_common_header_number: Option<Uint64>,
+    pub unknown_header_list_size: Uint64,
+    pub inflight_count: Uint64,
+    pub can_fetch_count: Uint64,
+}
+impl From<rpc_types::PeerSyncState> for PeerSyncState {
+    fn from(json: rpc_types::PeerSyncState) -> PeerSyncState {
+        PeerSyncState {
+            best_known_header_hash: json.best_known_header_hash,
+            best_known_header_number: json.best_known_header_number.map(|number| number.value()),
+            last_common_header_hash: json.last_common_header_hash,
+            last_common_header_number: json.last_common_header_number.map(|number| number.value()),
+            unknown_header_list_size: json.unknown_header_list_size.value(),
+            inflight_count: json.inflight_count.value(),
+            can_fetch_count: json.can_fetch_count.value(),
         }
     }
 }
@@ -818,21 +968,27 @@ impl From<rpc_types::BannedAddr> for BannedAddr {
 // =========
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub struct TxPoolInfo {
+    pub tip_hash: H256,
+    pub tip_number: BlockNumber,
     pub pending: Uint64,
     pub proposed: Uint64,
     pub orphan: Uint64,
     pub total_tx_size: Uint64,
     pub total_tx_cycles: Uint64,
+    pub min_fee_rate: Uint64,
     pub last_txs_updated_at: Timestamp,
 }
 impl From<rpc_types::TxPoolInfo> for TxPoolInfo {
     fn from(json: rpc_types::TxPoolInfo) -> TxPoolInfo {
         TxPoolInfo {
+            tip_hash: json.tip_hash,
+            tip_number: json.tip_number.value(),
             pending: json.pending.into(),
             proposed: json.proposed.into(),
             orphan: json.orphan.into(),
             total_tx_size: json.total_tx_size.into(),
             total_tx_cycles: json.total_tx_cycles.into(),
+            min_fee_rate: json.min_fee_rate.value(),
             last_txs_updated_at: json.last_txs_updated_at.into(),
         }
     }
